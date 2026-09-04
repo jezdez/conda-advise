@@ -29,6 +29,7 @@ requirements:
     - conda >=24.3
     - cvss >=3.6
     - packageurl-python >=0.16
+    - rich >=13.0
 
 tests:
   - python:

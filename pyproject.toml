@@ -25,6 +25,7 @@ dependencies = [
   # conda is supplied by the active conda environment and is not available on PyPI.
   "cvss>=3.6",
   "packageurl-python>=0.16",
+  "rich>=13.0",
 ]
 description = "Conda plugin for advisory awareness before package installation"
 dynamic = ["version"]
@@ -103,6 +104,7 @@ platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64", "win-64", "win-
 cvss = ">=3.6"
 packageurl-python = ">=0.16"
 python = ">=3.10"
+rich = ">=13.0"
 
 [tool.pixi.feature.runtime]
 platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64", "win-64"]
@@ -203,6 +205,7 @@ packageurl-python = ">=0.16"
 pip = ">=24.0"
 python = "3.14.*"
 python-build = ">=1.2"
+rich = ">=13.0"
 
 [tool.pixi.feature.win-arm64-native]
 platforms = ["win-arm64"]
@@ -214,6 +217,7 @@ jsonschema = ">=4.0"
 packageurl-python = ">=0.16"
 pip = ">=24.0"
 python = "3.13.*"
+rich = ">=13.0"
 
 [tool.pixi.feature.smoke]
 platforms = ["linux-64"]

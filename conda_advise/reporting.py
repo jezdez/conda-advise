@@ -8,6 +8,12 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 from unicodedata import category
 
+from rich import box
+from rich.console import Console, Group
+from rich.table import Table
+from rich.text import Text
+from rich.tree import Tree
+
 from .models import CoverageStatus, EvidenceType, ProviderName
 from .provenance import subject_from_record
 
@@ -16,6 +22,7 @@ if TYPE_CHECKING:
     from typing import TextIO
 
     from conda.models.records import PackageRecord
+    from rich.console import RenderableType
 
     from .models import AdvisoryReport, Finding, Severity
 
@@ -45,7 +52,13 @@ def render_report(
         )
         return
 
-    print(_render_human(report), file=output)
+    console = Console(
+        file=output,
+        highlight=False,
+        markup=False,
+        force_terminal=output.isatty(),
+    )
+    console.print(_render_human(report))
 
 
 def render_error(
@@ -70,7 +83,16 @@ def render_error(
             file=output,
         )
     else:
-        print(f"conda-advise: {_terminal_text(message)}", file=output)
+        console = Console(
+            file=output,
+            highlight=False,
+            markup=False,
+            force_terminal=output.isatty(),
+        )
+        error = Text("conda-advise: ", style="bold cyan")
+        error.append("Error: ", style="bold red")
+        error.append(_terminal_text(message))
+        console.print(error, soft_wrap=True)
 
 
 def render_hook_summary(report: AdvisoryReport) -> str:
@@ -142,29 +164,40 @@ def apply_metadata_tags(
     return tagged
 
 
-def _render_human(report: AdvisoryReport) -> str:
+def _render_human(report: AdvisoryReport) -> Group:
     subjects = {subject.identifier: subject for subject in report.subjects}
     grouped: dict[str, list[Finding]] = defaultdict(list)
     for finding in report.findings:
         grouped[finding.subject].append(finding)
 
-    lines = [
-        f"Conda advisory report for {report.target}",
-        f"Provider: {report.provider.value}",
+    renderables: list[RenderableType] = [
+        Text("Conda advisory report", style="bold cyan")
     ]
+    metadata = Table.grid(padding=(0, 2))
+    metadata.add_column(style="bold", no_wrap=True)
+    metadata.add_column(overflow="fold")
+    metadata.add_row("Target:", Text(_terminal_text(report.target)))
+    metadata.add_row("Provider:", Text(report.provider.value))
+    renderables.append(metadata)
     if report.provider is ProviderName.BASILISK:
-        lines.append("Basilisk is an experimental Prefix.dev provider.")
+        status = Text("Experimental provider: ", style="bold yellow")
+        status.append("Basilisk is an experimental Prefix.dev provider.")
+        renderables.append(status)
 
+    if grouped:
+        renderables.extend((Text(), Text("Advisory matches", style="bold")))
     for subject_id in sorted(grouped):
-        subject = subjects.get(subject_id)
-        if subject is None:
-            heading = subject_id
-        else:
-            heading = (
-                f"{subject.name} {subject.version} {subject.build} "
-                f"({subject.channel}/{subject.subdir})"
+        if subject := subjects.get(subject_id):
+            heading = Text(_terminal_text(subject.name), style="bold")
+            heading.append(
+                _terminal_text(
+                    f" {subject.version} {subject.build} "
+                    f"({subject.channel}/{subject.subdir})"
+                )
             )
-        lines.extend(("", heading))
+        else:
+            heading = Text(_terminal_text(subject_id), style="bold")
+        tree = Tree(heading, guide_style="dim")
         for finding in sorted(grouped[subject_id], key=lambda item: item.id):
             qualifiers = [finding.severity.value]
             if finding.score is not None:
@@ -173,24 +206,48 @@ def _render_human(report: AdvisoryReport) -> str:
                 qualifiers.append("CISA KEV")
             if finding.stale:
                 qualifiers.append("stale")
-            lines.append(f"  {finding.id} [{', '.join(qualifiers)}]")
+            label = Text(_terminal_text(finding.id), style="bold")
+            label.append(" [")
+            for index, qualifier in enumerate(qualifiers):
+                if index:
+                    label.append(", ")
+                style = {
+                    "unknown": "dim",
+                    "low": "cyan",
+                    "medium": "yellow",
+                    "high": "bold red",
+                    "critical": "bold white on red",
+                    "CISA KEV": "bold magenta",
+                    "stale": "yellow",
+                }.get(qualifier, "")
+                label.append(qualifier, style=style)
+            label.append("]")
+            advisory = tree.add(label)
             if finding.summary:
-                lines.append(f"    {finding.summary}")
+                summary = Text("Summary: ", style="bold")
+                summary.append(_terminal_text(finding.summary))
+                advisory.add(summary)
             aliases = tuple(alias for alias in finding.aliases if alias != finding.id)
             if aliases:
-                lines.append(f"    Aliases: {', '.join(aliases)}")
+                alias_text = Text("Aliases: ", style="bold")
+                alias_text.append(_terminal_text(", ".join(aliases)))
+                advisory.add(alias_text)
             if finding.fixes:
-                lines.append(f"    Upstream fixes: {', '.join(finding.fixes)}")
+                fixes = Text("Upstream fixes: ", style="bold")
+                fixes.append(_terminal_text(", ".join(finding.fixes)))
+                advisory.add(fixes)
             for evidence in sorted(
                 finding.evidence,
                 key=lambda item: (item.type.value, item.component_purl or ""),
             ):
+                evidence_text = Text("Evidence: ", style="bold")
                 if evidence.type is EvidenceType.ARTIFACT_COMPONENT:
-                    lines.append(
-                        f"    Evidence: artifact component {evidence.component_purl}"
+                    evidence_text.append(
+                        _terminal_text(f"artifact component {evidence.component_purl}")
                     )
                 else:
-                    lines.append("    Evidence: upstream version match")
+                    evidence_text.append("upstream version match")
+                advisory.add(evidence_text)
             sources = sorted(
                 {
                     f"{item.provider.value}:{item.id} {item.url}"
@@ -198,7 +255,10 @@ def _render_human(report: AdvisoryReport) -> str:
                 }
             )
             if sources:
-                lines.append(f"    Sources: {', '.join(sources)}")
+                source_text = Text("Sources: ", style="bold")
+                source_text.append(_terminal_text(", ".join(sources)))
+                advisory.add(source_text)
+        renderables.extend((Text(), tree))
 
     coverage_items = tuple(
         item
@@ -206,53 +266,87 @@ def _render_human(report: AdvisoryReport) -> str:
         if item.status is not CoverageStatus.COMPLETE or item.stale
     )
     if coverage_items:
-        lines.extend(("", "Coverage:"))
+        coverage_table = Table(
+            title="Coverage",
+            title_justify="left",
+            box=box.SIMPLE_HEAD,
+            header_style="bold",
+        )
+        coverage_table.add_column("Package", overflow="fold")
+        coverage_table.add_column("Status", overflow="fold")
+        coverage_table.add_column("Reason", overflow="fold")
+        coverage_table.add_column("Freshness", overflow="fold")
         for item in sorted(coverage_items, key=lambda entry: entry.subject):
             subject = subjects.get(item.subject)
             name = subject.name if subject is not None else item.subject
-            detail = item.status.value
-            if item.reason is not None:
-                detail += f" ({item.reason.value})"
-            if item.stale:
-                detail += ", stale"
-            lines.append(f"  {name}: {detail}")
+            status_style = {
+                CoverageStatus.COMPLETE: "cyan",
+                CoverageStatus.NOT_CHECKED: "yellow",
+                CoverageStatus.INCOMPLETE: "bold red",
+            }[item.status]
+            coverage_table.add_row(
+                Text(_terminal_text(name)),
+                Text(item.status.value, style=status_style),
+                Text(item.reason.value if item.reason is not None else "-"),
+                Text("stale", style="yellow") if item.stale else Text("current"),
+            )
+        renderables.extend((Text(), coverage_table))
 
     if report.failures:
-        lines.extend(("", "Provider failures:"))
+        failure_table = Table(
+            title="Provider failures",
+            title_justify="left",
+            box=box.SIMPLE_HEAD,
+            header_style="bold",
+        )
+        failure_table.add_column("Source", overflow="fold")
+        failure_table.add_column("Package", overflow="fold")
+        failure_table.add_column("Failure", overflow="fold")
         for failure in sorted(
             report.failures,
             key=lambda item: (item.source, item.subject or "", item.reason.value),
         ):
-            subject = f" for {failure.subject}" if failure.subject else ""
             description = f"{failure.reason.value}: {failure.message}"
-            lines.append(f"  {failure.source}{subject}: {description}")
+            failure_table.add_row(
+                Text(_terminal_text(failure.source)),
+                Text(_terminal_text(failure.subject or "-")),
+                Text(_terminal_text(description), style="red"),
+            )
+        renderables.extend((Text(), failure_table))
 
     summary = report.summary
-    lines.extend(
+    renderables.extend(
         (
-            "",
-            (
-                f"Checked {summary.checked} of {len(report.subjects)} artifacts. "
+            Text(),
+            Text("Scan summary", style="bold"),
+            Text(f"Checked {summary.checked} of {len(report.subjects)} artifacts."),
+            Text(
                 f"Mapped {summary.mapped}, unmapped {summary.unmapped}, "
-                f"not checked {summary.not_checked}, "
-                f"incomplete {summary.incomplete}."
+                f"not checked {summary.not_checked}, incomplete {summary.incomplete}."
             ),
         )
     )
     if not report.findings:
-        lines.append("No matching advisories were found in the configured provider.")
+        renderables.append(
+            Text("No matching advisories were found in the configured provider.")
+        )
     else:
         total_noun = "match" if len(report.findings) == 1 else "matches"
-        lines.append(
+        result = Text(
             f"Found {len(report.findings)} {total_noun}, "
             f"{summary.qualifying_matches} at or above "
-            f"{report.minimum_severity.value} or listed in CISA KEV."
         )
+        result.append(report.minimum_severity.value, style="bold")
+        result.append(" or listed in CISA KEV.")
+        renderables.append(result)
     if report.has_incomplete:
-        lines.append(
-            "The scan is incomplete. Packages with missing coverage remain unknown."
+        renderables.append(
+            Text(
+                "Incomplete scan: Packages with missing coverage remain unknown.",
+                style="bold yellow",
+            )
         )
-    return "\n".join(_terminal_text(line) for line in lines)
+    return Group(*renderables)
 
 
 def _terminal_text(value: object) -> str:

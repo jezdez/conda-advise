@@ -10,6 +10,7 @@ They do not contact Parselmouth, OSV, Basilisk, CISA, or conda-forge.
 | `providers` | Compare the `osv` and experimental `basilisk` providers in separate runs |
 
 Each tape writes a GIF for documentation and an MP4 for higher-quality playback.
+The shared settings use a tall terminal, deliberate typing, and long result pauses so the complete report remains readable.
 
 ## Regenerate
 

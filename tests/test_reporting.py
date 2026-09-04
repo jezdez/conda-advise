@@ -19,6 +19,7 @@ from conda_advise.models import (
     EvidenceType,
     FailureReason,
     Finding,
+    ProviderFailure,
     ProviderName,
     Severity,
     Subject,
@@ -30,6 +31,13 @@ from conda_advise.reporting import (
     render_report,
     report_exit_code,
 )
+
+
+class TerminalStream(io.StringIO):
+    """In-memory text stream that behaves like an interactive terminal."""
+
+    def isatty(self) -> bool:
+        return True
 
 
 def make_report(
@@ -155,6 +163,22 @@ def test_render_report_emits_one_json_document_with_selected_target() -> None:
     assert payload["findings"][0]["evidence"][0]["type"] == "artifact_component"
 
 
+def test_render_report_keeps_json_output_exactly_unchanged() -> None:
+    stream = TerminalStream()
+    report = replace(make_report(findings=(make_finding(),)), target="/target")
+    expected = json.dumps(
+        report.to_dict(),
+        allow_nan=False,
+        indent=2,
+        sort_keys=True,
+    )
+
+    render_report(report, json_output=True, stream=stream)
+
+    assert stream.getvalue() == expected + "\n"
+    assert "\x1b" not in stream.getvalue()
+
+
 def test_render_report_rejects_nonfinite_json_numbers() -> None:
     stream = io.StringIO()
     finding = replace(make_finding(), score=float("nan"))
@@ -183,6 +207,81 @@ def test_render_report_distinguishes_component_evidence() -> None:
     assert "No matching advisories" not in output
     assert "Found 1 match, 1 at or above high" in output
     assert "Mapped 1, unmapped 0, not checked 0, incomplete 0" in output
+
+
+def test_human_report_styles_interactive_terminal_output(monkeypatch) -> None:
+    monkeypatch.setenv("TERM", "xterm-256color")
+    stream = TerminalStream()
+
+    render_report(
+        replace(make_report(findings=(make_finding(),)), target="/target"),
+        json_output=False,
+        stream=stream,
+    )
+
+    output = stream.getvalue()
+    assert "\x1b[" in output
+    assert "Advisory matches" in output
+    assert "high" in output
+    assert "CISA KEV" in output
+
+
+def test_human_report_is_unstyled_for_nonterminal_output() -> None:
+    stream = io.StringIO()
+    finding = replace(
+        make_finding(),
+        summary="Literal [bold red]provider text[/bold red]",
+    )
+
+    render_report(
+        replace(make_report(findings=(finding,)), target="/target"),
+        json_output=False,
+        stream=stream,
+    )
+
+    output = stream.getvalue()
+    assert "\x1b" not in output
+    assert "Literal [bold red]provider text[/bold red]" in output
+    assert "high" in output
+
+
+def test_nonterminal_report_preserves_long_values_without_ellipsis() -> None:
+    long_target = "/target/" + "target-segment-" * 12 + "target-end"
+    long_package = "package-" + "Q" * 180 + "-package-end"
+    long_failure = "provider-value-" + "Z" * 180 + "-failure-end"
+    report = make_report(
+        status=CoverageStatus.INCOMPLETE,
+        reason=FailureReason.REQUEST_FAILED,
+    )
+    subject = replace(report.subjects[0], name=long_package)
+    report = replace(
+        report,
+        target=long_target,
+        subjects=(subject,),
+        failures=(
+            ProviderFailure(
+                provider=ProviderName.OSV,
+                source="provider-source",
+                reason=FailureReason.REQUEST_FAILED,
+                message=long_failure,
+            ),
+        ),
+    )
+    stream = io.StringIO()
+
+    render_report(report, json_output=False, stream=stream)
+
+    output = stream.getvalue()
+    output_without_layout_whitespace = "".join(output.split())
+    assert "…" not in output
+    assert long_target in output_without_layout_whitespace
+    assert "package-" in output
+    assert "-package-end" in output
+    assert output.count("Q") == 180
+    assert "provider-value-" in output
+    assert "-failure-end" in output
+    assert output.count("Z") == 180
+    assert long_failure in output_without_layout_whitespace
 
 
 def test_basilisk_is_marked_experimental_in_every_output_mode() -> None:
@@ -236,6 +335,22 @@ def test_render_error_keeps_json_machine_readable() -> None:
         "target": "/missing",
         "error": {"message": "invalid target"},
     }
+
+
+def test_render_error_styles_only_interactive_terminal_output(monkeypatch) -> None:
+    monkeypatch.setenv("TERM", "xterm-256color")
+    terminal = TerminalStream()
+    redirected = io.StringIO()
+
+    render_error("invalid [bold]target[/bold]", json_output=False, stream=terminal)
+    render_error("invalid [bold]target[/bold]", json_output=False, stream=redirected)
+
+    assert "\x1b[" in terminal.getvalue()
+    assert "Error:" in terminal.getvalue()
+    assert "[bold]target[/bold]" in terminal.getvalue()
+    assert redirected.getvalue() == (
+        "conda-advise: Error: invalid [bold]target[/bold]\n"
+    )
 
 
 def test_render_error_normalizes_empty_exceptions_to_schema_valid_json() -> None:

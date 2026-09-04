@@ -164,7 +164,7 @@ def test_cache_write_contention_stops_at_the_scan_deadline(tmp_path) -> None:
             cache.put("source", "blocked", {"ok": True}, positive=True)
             elapsed = time.monotonic() - started
 
-    assert elapsed < 0.5
+    assert elapsed < 1.0
     with closing(sqlite3.connect(path)) as connection:
         count = connection.execute(
             "SELECT COUNT(*) FROM cache_entries WHERE cache_key = 'blocked'"

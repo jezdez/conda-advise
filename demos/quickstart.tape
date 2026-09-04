@@ -10,6 +10,9 @@ Wait /\)/
 Type `export PS1="$DEMO_PS1"`
 Enter
 Wait /demo>/
+Type `unset NO_COLOR`
+Enter
+Wait /demo>/
 Type `demo_root="/tmp/conda-advise-demo-$PPID" && rm -rf "$demo_root" && mkdir -p "$demo_root" && export XDG_CACHE_HOME="$demo_root/cache" && python demos/fixtures/setup.py "$demo_root" >/dev/null`
 Enter
 Wait /demo>/
@@ -29,11 +32,11 @@ Show
 
 Type "# Check an installed conda environment"
 Enter
-Sleep 500ms
-Type@80ms `conda advise --prefix "$demo_root/prefix"`
+Sleep 1s
+Type@100ms `conda advise --prefix "$demo_root/prefix"`
 Enter
 Wait /demo>/
-Sleep 4s
+Sleep 12s
 
 Hide
 Type `kill "$demo_server_pid"`

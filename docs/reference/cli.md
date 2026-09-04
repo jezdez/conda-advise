@@ -50,7 +50,8 @@ Without either option, conda's active or default prefix is used.
 | `--json` | Write one `conda-advise-report-v1` document to stdout |
 
 Conda's standard networking and console options are also accepted through its parser helpers.
-The human report groups findings by artifact.
+The human report uses Rich to group findings by artifact and present coverage and provider failures as readable tables.
+Color supplements written severity and status labels, and redirected output contains no terminal escape sequences.
 The JSON report is the supported automation interface.
 
 ## Exit statuses

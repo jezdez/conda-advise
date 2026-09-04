@@ -113,7 +113,7 @@ release_root="$(mktemp -d)"
 release_prefix="$release_root/environment"
 consumer_root="$release_root/fixture"
 conda create --yes --prefix "$release_prefix" --override-channels \
-  --channel conda-forge "conda>=24.3" cvss jsonschema packageurl-python pip
+  --channel conda-forge "conda>=24.3" cvss jsonschema packageurl-python pip rich
 conda run --prefix "$release_prefix" python -m pip install --no-cache-dir \
   "$release_check/pypi/conda_advise-${release_version}-py3-none-any.whl"
 conda run --prefix "$release_prefix" conda advise --help
@@ -198,7 +198,7 @@ Never move a release tag, replace published assets, or reuse a released version.
 Start the conda-forge submission only after version `0.1.0` is available on PyPI and the clean consumer smoke test above passes.
 
 1. Submit a noarch Python recipe to `conda-forge/staged-recipes` using the source distribution published on PyPI.
-2. Require Python 3.10 or newer, conda 24.3 or newer, `cvss`, and `packageurl-python` in the recipe.
+2. Require Python 3.10 or newer, conda 24.3 or newer, `cvss`, `packageurl-python`, and `rich` in the recipe.
 3. Test `import conda_advise`, conda plugin discovery, `conda advise --help`, and a deterministic offline fixture scan in the recipe.
 4. Build and test the recipe locally with `rattler-build` before opening the staged-recipes pull request.
 5. After feedstock creation, use the normal conda-forge bot update pull requests for subsequent releases.

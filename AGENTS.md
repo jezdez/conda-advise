@@ -33,6 +33,7 @@
 - Reuse conda parser helpers for standard options. Do not register duplicate `--json`, `--offline`, prefix, verbosity, debug, trace, or console arguments.
 - Register through `[project.entry-points.conda]` and the `conda_subcommands`, `conda_settings`, and `conda_post_solves` hooks.
 - Treat `--json` only as an output format. Emit one complete JSON document on stdout and keep human diagnostics off stdout.
+- Render human reports with Rich using text labels that remain meaningful without color. Keep JSON output independent of terminal rendering.
 - Keep `artifact_component` and `upstream_version` evidence distinct. Component presence is not proof that vulnerable code is reachable or unpatched.
 - Do not send private, defaults, Anaconda commercial, local, or unrecognized package records to public providers.
 - Never describe missing coverage, an unmapped package, provider failure, stale data, or an empty match set as safe or unaffected.
