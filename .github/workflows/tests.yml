@@ -149,8 +149,10 @@ jobs:
           }
 
   coverage:
-    name: Coverage, Ubuntu, Python 3.13
+    name: Coverage and performance, Ubuntu, Python 3.13
     runs-on: ubuntu-latest
+    env:
+      _CONDA_ADVISE_ENFORCE_PERFORMANCE_TARGETS: "1"
     permissions:
       contents: read
       id-token: write # Authenticate the upload to Codecov without a stored token.
