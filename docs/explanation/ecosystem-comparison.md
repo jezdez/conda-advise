@@ -1,6 +1,6 @@
 # Related tools and services
 
-`conda-advise` is an open client for public conda-forge advisory awareness.
+With its default allowed-origin list, `conda-advise` is an open client for advisory awareness about records whose sanitized artifact URLs match the public conda-forge or Prefix mirror URL prefixes.
 It does not duplicate existing dashboards, file scanners, or commercial policy products.
 
 ## Prefix Parselmouth and Basilisk
@@ -9,7 +9,7 @@ It does not duplicate existing dashboards, file scanners, or commercial policy p
 Its artifact hash gives `conda-advise` more specific evidence than a name-only mapping.
 
 [Basilisk](https://basilisk.prefix.dev/status) is Prefix's hosted conda-forge vulnerability-matching dashboard and API.
-It combines upstream identity mappings and vulnerability sources across more packages than the PyPI-component path can cover.
+It accepts conda-forge identities directly, so it can return name-and-version matches for packages without a Parselmouth PyPI mapping.
 `conda-advise` exposes it as an experimental opt-in provider rather than creating another dashboard.
 
 Prefix also demonstrates [Grype against materialized conda environments](https://prefix.dev/blog/securing-the-supply-chain).
@@ -22,7 +22,9 @@ Anaconda documents authenticated environment scans, artifact-status curation, ac
 Anaconda also describes its [package SBOMs and their use for component matching](https://www.anaconda.com/blog/sboms-at-anaconda).
 
 Those paid services can associate curated states such as active, cleared, mitigated, and disputed with artifacts and organizational policy.
-`conda-advise` does not query paid APIs, store Anaconda credentials, inspect private channels, or replace `anaconda audit scan`.
+`conda-advise` does not query paid APIs or replace `anaconda audit scan`.
+It reads installed private-channel records locally so it can report records whose sanitized artifact URLs fall outside the configured allowed-origin list as `not_checked`.
+With the default origin list, ordinary private-channel records have other URLs and are not transmitted.
 
 Any future Anaconda integration should live in Anaconda-owned code, use `anaconda-auth`, and preserve product entitlements.
 

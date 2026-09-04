@@ -39,7 +39,7 @@ def conda_subcommands() -> Iterable[CondaSubcommand]:
 
     yield CondaSubcommand(
         name="advise",
-        summary="Report known advisories for conda packages.",
+        summary="Report advisory matches and coverage for a conda environment.",
         action=execute,
         configure_parser=configure_parser,
     )
@@ -81,11 +81,15 @@ def conda_settings() -> Iterable[CondaSetting]:
             and not parsed.fragment
             and (parsed.scheme == "https" or (parsed.scheme == "http" and is_loopback))
         )
-        return valid or "must be an HTTPS URL without credentials, query, or fragment"
+        return valid or (
+            "must be HTTPS, or HTTP on an exact loopback host, without credentials, "
+            "query, or fragment"
+        )
 
     def secure_urls(values: tuple[str, ...]) -> bool | str:
         return all(secure_url(value) is True for value in values) or (
-            "must contain only HTTPS URLs without credentials, query, or fragment"
+            "must contain only HTTPS URLs, or HTTP URLs on exact loopback hosts, "
+            "without credentials, queries, or fragments"
         )
 
     yield CondaSetting(
@@ -111,7 +115,7 @@ def conda_settings() -> Iterable[CondaSetting]:
     )
     yield CondaSetting(
         name=MINIMUM_SEVERITY_SETTING,
-        description="Minimum advisory severity reported after a solve.",
+        description="Minimum advisory severity that qualifies a match.",
         parameter=PrimitiveParameter(
             "high",
             element_type=str,
@@ -120,7 +124,7 @@ def conda_settings() -> Iterable[CondaSetting]:
     )
     yield CondaSetting(
         name=TIMEOUT_SETTING,
-        description="Maximum seconds spent checking advisories after a solve.",
+        description="Advisory scan deadline for manual and post-solve scans.",
         parameter=PrimitiveParameter(
             5,
             element_type=int,
@@ -129,7 +133,7 @@ def conda_settings() -> Iterable[CondaSetting]:
     )
     yield CondaSetting(
         name=ORIGINS_SETTING,
-        description="Trusted public conda-forge artifact origins.",
+        description="Artifact origins eligible for advisory provider requests.",
         parameter=SequenceParameter(
             PrimitiveParameter("", element_type=str),
             default=DEFAULT_ORIGINS,
@@ -185,7 +189,7 @@ def _post_solve(
         if getattr(settings, POST_SOLVE_SETTING) == "off" or not link_precs:
             return
 
-        from .reporting import apply_metadata_tags, render_hook_summary
+        from .reporting import apply_metadata_tags, render_hook_warning
         from .scanner import scan_records
 
         report = scan_records(
@@ -201,10 +205,12 @@ def _post_solve(
             target=str(context.target_prefix),
         )
         apply_metadata_tags(report, link_precs)
-        if summary := render_hook_summary(report):
-            import sys
-
-            print(summary, file=sys.stderr)
+        render_hook_warning(
+            report,
+            rich_output=not (
+                context.json or getattr(context, "console", None) == "json"
+            ),
+        )
     except Exception as error:
         import logging
 

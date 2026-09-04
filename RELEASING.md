@@ -18,6 +18,8 @@ Configure the GitHub Actions `anaconda` environment with an `ANACONDA_API_KEY` s
 Permit `anaconda` deployments only from version tags and require maintainer approval.
 The workflow exposes that secret as `ANACONDA_API_TOKEN` only to the Anaconda Client upload step because that is the environment variable read by Anaconda Client.
 Enable immutable GitHub releases before publishing the first version.
+Required reviewers, tag deployment policies, and immutable releases are repository settings rather than workflow controls.
+Verify those settings immediately before creating each release tag.
 
 ## Prepare a release
 

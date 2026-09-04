@@ -7,7 +7,7 @@ This tutorial runs `conda-advise` from its locked source checkout, scans the dev
 
 - Git
 - [Pixi](https://pixi.prefix.dev/)
-- Network access to Prefix's Parselmouth service, OSV, and CISA
+- Network access to Prefix's Parselmouth service and OSV, plus CISA when CVE findings need KEV enrichment
 
 `conda-advise` has no published release yet.
 The source workflow keeps the preview inside the repository's Pixi environment.
@@ -49,7 +49,8 @@ pixi run --locked -e dev conda advise
 ```
 
 With no `--name` or `--prefix`, conda selects its active or default prefix.
-The command reads installed conda package records and schedules provider requests only for eligible public conda-forge records.
+The command reads installed conda package records and schedules provider requests only for recognized records whose sanitized artifact URLs match the configured allowed-origin list.
+The default list contains the canonical conda-forge origin and Prefix mirror.
 
 The default lookup follows this path:
 
@@ -119,7 +120,10 @@ Qualifying matches receive one highest-severity tag in the transaction display, 
 ![post-solve advisory warning](../../demos/post-solve-warning.gif)
 
 The hook runs during dry runs and commands using `-y`.
-It does not add another prompt, block the transaction, or turn a provider failure into a conda failure.
+It runs synchronously after solving and before conda creates the transaction, so it can delay the command while work uses the configured deadline.
+The deadline stops the scan from waiting for unfinished requests but does not terminate an HTTP worker that is already running.
+Such a worker may finish after the report but cannot change it.
+It does not add another prompt and catches ordinary scan exceptions, so normal provider failures do not abort the transaction.
 Use the [post-solve configuration guide](../how-to/configure-post-solve.md) to change the warning threshold or disable automatic checks.
 
 ## Inspect the machine-readable report
@@ -137,11 +141,11 @@ python -m json.tool advise-report.json | less
 
 :::
 
-:::{tab-item} PowerShell
+:::{tab-item} PowerShell 7
 
 ```powershell
-pixi run --locked -e dev conda advise --json | Set-Content advise-report.json
-Get-Content advise-report.json | python -m json.tool
+pixi run --locked -e dev conda advise --json | Set-Content -LiteralPath advise-report.json -Encoding utf8
+Get-Content -LiteralPath advise-report.json | python -m json.tool
 ```
 
 :::
@@ -159,15 +163,20 @@ Run a separate scan with Basilisk:
 pixi run --locked -e dev conda advise --provider=basilisk
 ```
 
-This sends eligible public conda-forge package names and versions to Prefix.
-It does not send private or unrecognized package records.
+This sends names and versions from eligible records to Prefix.
+With the default allowed-origin list, ordinary private-channel records have URLs that do not match and are not sent.
+Adding an origin authorizes recognized records under that URL path for lookup, including private records if the configured path contains them.
+Eligibility also requires syntactically valid package names, versions, and conda subdirectories, but the client does not cross-check the record's channel field, filename, or digest against conda-forge metadata.
 Basilisk results use `upstream_version` evidence because the match does not establish the status of one exact conda build.
 
 More precisely, each eligible package contributes one conda package URL containing only the constant `conda` type, the constant `conda-forge` namespace, the canonical package name, and its version.
 It does not call Parselmouth or OSV from your machine.
 
-Both providers download the CISA KEV catalog only after a result contains a CVE identifier or alias.
-That download sends no package, component, advisory, or CVE identifier to CISA.
+When a non-withdrawn provider finding has a CVE identifier or alias, KEV enrichment first uses an eligible fresh cached catalog unless `--refresh` was requested.
+Otherwise an online scan attempts a bodyless request for the built-in CISA catalog URL.
+If that request fails, an eligible cached positive catalog may be used as stale and the scan is marked incomplete.
+Offline scans never send this request.
+The request sends no package, component, advisory, or CVE identifier to CISA.
 
 ## Next steps
 

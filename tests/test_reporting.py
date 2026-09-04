@@ -28,6 +28,7 @@ from conda_advise.reporting import (
     apply_metadata_tags,
     render_error,
     render_hook_summary,
+    render_hook_warning,
     render_report,
     report_exit_code,
 )
@@ -415,3 +416,80 @@ def test_render_hook_summary_uses_singular_grammar() -> None:
     summary = render_hook_summary(make_report(findings=(make_finding(),)))
 
     assert "1 package has advisory matches" in summary
+
+
+def test_render_hook_warning_is_silent_for_complete_empty_report() -> None:
+    stream = TerminalStream()
+
+    render_hook_warning(make_report(), stream=stream)
+
+    assert stream.getvalue() == ""
+
+
+def test_render_hook_warning_preserves_redirected_summary() -> None:
+    report = make_report(findings=(make_finding(),))
+    stream = io.StringIO()
+
+    render_hook_warning(report, stream=stream)
+
+    assert stream.getvalue() == f"{render_hook_summary(report)}\n"
+
+
+def test_render_hook_warning_uses_plain_output_for_global_json_mode() -> None:
+    report = make_report(findings=(make_finding(),))
+    stream = TerminalStream()
+
+    render_hook_warning(report, stream=stream, rich_output=False)
+
+    assert stream.getvalue() == f"{render_hook_summary(report)}\n"
+
+
+@pytest.mark.parametrize(
+    ("report", "expected_title", "expected_text"),
+    [
+        (
+            make_report(findings=(make_finding(),)),
+            "CONDA ADVISORY WARNING",
+            "1 package has advisory matches",
+        ),
+        (
+            make_report(status=CoverageStatus.INCOMPLETE),
+            "CONDA ADVISORY COVERAGE INCOMPLETE",
+            "advisory coverage is incomplete",
+        ),
+    ],
+    ids=["advisory-match", "coverage-only"],
+)
+def test_render_hook_warning_labels_interactive_state(
+    monkeypatch,
+    report: AdvisoryReport,
+    expected_title: str,
+    expected_text: str,
+) -> None:
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    stream = TerminalStream()
+
+    render_hook_warning(report, stream=stream)
+
+    output = stream.getvalue()
+    assert "\x1b[" in output
+    assert expected_title in output
+    assert expected_text in output
+    assert "+" in output
+
+
+def test_render_hook_warning_honors_no_color(monkeypatch) -> None:
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.setenv("NO_COLOR", "1")
+    stream = TerminalStream()
+
+    render_hook_warning(
+        make_report(findings=(make_finding(),)),
+        stream=stream,
+    )
+
+    output = stream.getvalue()
+    assert "CONDA ADVISORY WARNING" in output
+    assert "30;43m" not in output
+    assert "33m" not in output

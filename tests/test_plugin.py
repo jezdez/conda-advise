@@ -457,7 +457,10 @@ def test_conda_subcommands_registers_advise_and_common_typo() -> None:
     subcommands = list(conda_subcommands())
 
     assert [subcommand.name for subcommand in subcommands] == ["advise", "advice"]
-    assert subcommands[0].summary == "Report known advisories for conda packages."
+    assert (
+        subcommands[0].summary
+        == "Report advisory matches and coverage for a conda environment."
+    )
     assert all(callable(subcommand.action) for subcommand in subcommands)
     assert all(callable(subcommand.configure_parser) for subcommand in subcommands)
     assert subcommands[0].action is subcommands[1].action
@@ -482,7 +485,7 @@ def test_conda_settings_registers_flat_settings() -> None:
     assert settings[TIMEOUT_SETTING].parameter.default.value == 5
 
 
-def test_conda_post_solves_registers_fail_open_hook() -> None:
+def test_conda_post_solves_registers_warning_hook() -> None:
     hooks = list(conda_post_solves())
 
     assert len(hooks) == 1
@@ -575,6 +578,7 @@ def test_conda_runs_discovered_post_solve_hook_during_real_dry_run(
     baseline_payload = json.loads(baseline.stdout)
     machine_payload = json.loads(machine.stdout)
     assert machine_payload == baseline_payload
+    assert "conda-advise:" not in machine.stdout
     assert machine_payload["success"] is True
     assert any(
         record["name"] == INTEGRATION_PACKAGE
@@ -756,6 +760,40 @@ def test_post_solve_checks_only_link_records(
     assert calls[0][0] == (link_record,)
     assert calls[0][1]["provider"] == "osv"
     assert calls[0][1]["target"] == str(context.target_prefix)
+
+
+@pytest.mark.parametrize(
+    ("json_output", "console"),
+    [(True, "classic"), (False, "json")],
+    ids=["json-flag", "json-console"],
+)
+def test_post_solve_uses_plain_warning_in_global_json_mode(
+    monkeypatch, json_output: bool, console: str
+) -> None:
+    link_record = make_record()
+    rich_output = []
+
+    monkeypatch.setattr(context, "plugins", make_settings())
+    monkeypatch.setattr(context, "offline", False)
+    monkeypatch.setattr(context, "json", json_output)
+    monkeypatch.setattr(
+        type(context),
+        "console",
+        property(lambda self: console),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "conda_advise.scanner.scan_records",
+        lambda records, **options: make_hook_report(link_record),
+    )
+    monkeypatch.setattr(
+        "conda_advise.reporting.render_hook_warning",
+        lambda report, **options: rich_output.append(options["rich_output"]),
+    )
+
+    _post_solve("repodata.json", (), (link_record,))
+
+    assert rich_output == [False]
 
 
 def test_cached_post_solve_of_100_records(

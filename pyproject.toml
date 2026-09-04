@@ -27,7 +27,7 @@ dependencies = [
   "packageurl-python>=0.16",
   "rich>=13.0",
 ]
-description = "Conda plugin for advisory awareness before package installation"
+description = "Conda plugin for advisory reports and post-solve warnings"
 dynamic = ["version"]
 keywords = ["advisories", "conda", "conda-forge", "osv", "plugin", "security"]
 license = "BSD-3-Clause"

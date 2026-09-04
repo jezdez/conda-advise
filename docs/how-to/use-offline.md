@@ -10,6 +10,10 @@ The command may use cached positive matches that are no more than seven days old
 Those matches are marked stale when their normal 24-hour freshness period has expired.
 Expired empty results are not reused.
 
+If the resulting non-withdrawn findings contain a CVE identifier or alias, complete coverage also requires a fresh valid KEV cache entry.
+A stale positive KEV catalog is still used and marked stale, but it records `offline_cache_miss` and forces status 2.
+A missing or invalid KEV cache also forces status 2.
+
 Eligible artifacts without usable cached provider data are `incomplete` with reason `offline_cache_miss`, and the command exits with status 2.
 Ineligible records, records without the SHA-256 required by the `osv` provider, and artifacts already mapped as containing no supported component remain `not_checked`.
 The report does not interpret either status as unaffected.
@@ -23,4 +27,5 @@ conda advise --prefix /path/to/environment --offline --json > advise-report.json
 Do not combine `--offline` and `--refresh`.
 Refreshing requires network access and the command rejects that combination as a usage error.
 
-Conda's global offline setting is also respected because all requests use conda's own session interface.
+The plugin reads conda's global offline setting before scheduling provider work.
+conda's session-level offline adapter provides a second safeguard.

@@ -18,13 +18,13 @@ The version 1 schema is available in the source distribution, installed package,
 | `provider` | `osv` or `basilisk` |
 | `provider_experimental` | `true` when the selected provider is experimental |
 | `minimum_severity` | Threshold used to count qualifying matches |
-| `subjects` | Exact sanitized conda artifact identities |
+| `subjects` | Sanitized artifact identities reported by conda package records |
 | `coverage` | Provider status for each subject |
 | `findings` | Advisory matches and retained evidence |
 | `failures` | Provider, cache, and deadline failures |
 | `summary` | Checked, mapped, unmapped, not-checked, incomplete, and finding counters |
 
-An invalid target or command error returns a smaller versioned error document with `schema_version`, optional `target`, and `error.message`.
+A target-selection, usage, scan, or JSON-rendering error returns a smaller versioned error document with `schema_version`, optional `target`, and `error.message`.
 It exits with status 2.
 
 ## Subjects
@@ -33,8 +33,8 @@ Each subject contains `id`, `name`, `version`, `build`, `build_number`, `subdir`
 The ID is `sha256:<digest>` when SHA-256 is known.
 
 Credentials, token path segments, query strings, and fragments are removed from serialized URLs.
-The local report can include the sanitized origin URL for a private or unrecognized `not_checked` subject so the user can identify what was excluded.
-Those records are never transmitted to a provider or cached as provider inputs.
+The local report can include the sanitized artifact URL for a private or unrecognized `not_checked` subject so the user can identify what was excluded.
+Records whose sanitized artifact URLs fall outside the configured allowed-origin list are not transmitted to a provider or cached as provider inputs.
 
 ## Coverage
 
@@ -56,7 +56,9 @@ Each finding contains:
 
 Evidence records include their `type`, `provider`, exact artifact SHA-256 when known, and component PURL for `artifact_component` evidence.
 
-Source records preserve the provider-native ID, publication and modification fields, withdrawn state, source URL, CVSS vectors and calculated base scores, upstream fixes, and the normalized source data used by the provider.
+Advisory details with a nonempty `withdrawn` value are excluded before findings are built.
+Retained source records preserve the provider-native ID, publication and modification fields, null withdrawn state, source URL, CVSS vectors and calculated base scores, upstream fixes, and the complete validated provider response in `data`.
+Treat summaries, aliases, fixes, URLs, and every value under `data` as provider-controlled input.
 
 ## Compatibility
 

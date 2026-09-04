@@ -3,7 +3,7 @@ Set Framerate 25
 Set FontFamily "JetBrains Mono"
 Set FontSize 20
 Set Width 1280
-Set Height 960
+Set Height 1040
 Set Margin 20
 Set MarginFill "#19191b"
 Set Padding 20
