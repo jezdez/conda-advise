@@ -362,7 +362,11 @@ def test_cold_scan_of_100_link_records(monkeypatch, tmp_path) -> None:
     records = make_records(100)
 
     started = time.perf_counter()
-    report = scan_records(records, cache_path=tmp_path / "cache.sqlite3")
+    report = scan_records(
+        records,
+        cache_path=tmp_path / "cache.sqlite3",
+        timeout_seconds=30.0,
+    )
     elapsed = time.perf_counter() - started
 
     assert len(report.subjects) == 100
