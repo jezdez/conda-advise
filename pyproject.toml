@@ -1,0 +1,189 @@
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling>=1.12.2", "hatch-vcs>=0.2.0"]
+
+[project]
+authors = [{name = "Jannis Leidel", email = "jannis@leidel.info"}]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: BSD License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Topic :: Security",
+  "Topic :: System :: Software Distribution",
+]
+dependencies = [
+  # conda is supplied by the active conda environment and is not available on PyPI.
+  "cvss>=3.6",
+  "packageurl-python>=0.16",
+]
+description = "Conda plugin for advisory awareness before package installation"
+dynamic = ["version"]
+keywords = ["advisories", "conda", "conda-forge", "osv", "plugin", "security"]
+license = "BSD-3-Clause"
+maintainers = [{name = "Jannis Leidel", email = "jannis@leidel.info"}]
+name = "conda-advise"
+readme = {file = "README.md", content-type = "text/markdown"}
+requires-python = ">=3.10"
+
+[project.entry-points.conda]
+conda-advise = "conda_advise.plugin"
+
+[project.urls]
+Changelog = "https://github.com/jezdez/conda-advise/blob/main/CHANGELOG.md"
+Documentation = "https://jezdez.github.io/conda-advise"
+Homepage = "https://github.com/jezdez/conda-advise"
+Issues = "https://github.com/jezdez/conda-advise/issues"
+Repository = "https://github.com/jezdez/conda-advise"
+Security = "https://github.com/jezdez/conda-advise/security/policy"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "conda_advise/_version.py"
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/CHANGELOG.md",
+  "/LICENSE",
+  "/README.md",
+  "/conda_advise",
+  "/schema",
+  "/tests",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["conda_advise"]
+
+[tool.hatch.build.targets.wheel.force-include]
+schema = "conda_advise/schema"
+
+[tool.coverage.run]
+branch = true
+omit = ["conda_advise/_version.py"]
+source = ["conda_advise"]
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:"]
+show_missing = true
+skip_covered = true
+sort = "Miss"
+
+[tool.pytest.ini_options]
+addopts = ["-ra", "-v", "-m", "not live"]
+markers = ["live: opt-in tests against public advisory services"]
+testpaths = ["tests"]
+
+[tool.ruff]
+exclude = [".pixi", "conda_advise/_version.py"]
+target-version = "py310"
+
+[tool.ruff.lint]
+flake8-type-checking = {exempt-modules = [], strict = true}
+select = ["E", "F", "FA", "I", "ISC", "PT", "RUF100", "T10", "TCH", "UP", "W"]
+
+[tool.ty.environment]
+python-version = "3.10"
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64", "win-64"]
+
+[tool.pixi.dependencies]
+conda = ">=24.3"
+cvss = ">=3.6"
+packageurl-python = ">=0.16"
+python = ">=3.10"
+
+[tool.pixi.pypi-dependencies]
+conda-advise = {path = ".", editable = true}
+
+[tool.pixi.feature.dev.dependencies]
+pre-commit = ">=4.0"
+ruff = ">=0.9"
+ty = ">=0.0.1a7"
+
+[tool.pixi.feature.test.dependencies]
+jsonschema = ">=4.0"
+pytest = ">=8.0"
+pytest-cov = ">=6.0"
+
+[tool.pixi.feature.py310.dependencies]
+python = "3.10.*"
+
+[tool.pixi.feature.py311.dependencies]
+python = "3.11.*"
+
+[tool.pixi.feature.py312.dependencies]
+python = "3.12.*"
+
+[tool.pixi.feature.py313.dependencies]
+python = "3.13.*"
+
+[tool.pixi.feature.py314.dependencies]
+python = "3.14.*"
+
+[tool.pixi.feature.docs.dependencies]
+conda-sphinx-theme = ">=0.2"
+myst-parser = ">=3.0"
+sphinx = ">=7.0"
+sphinx-argparse = ">=0.4"
+sphinx-copybutton = ">=0.5"
+sphinx-design = ">=0.6"
+sphinx-reredirects = ">=0.1"
+sphinx-sitemap = ">=2.5"
+
+[tool.pixi.feature.demo.dependencies]
+bat = ">=0.25"
+vhs = ">=0.10"
+
+[tool.pixi.feature.release.dependencies]
+hatch-vcs = ">=0.2.0"
+hatchling = ">=1.12.2"
+python = "3.13.*"
+python-build = ">=1.2"
+twine = ">=6.2"
+
+[tool.pixi.environments]
+dev = {features = ["dev"], solve-group = "default"}
+docs = {features = ["docs"], solve-group = "default"}
+demo = {features = ["demo"], solve-group = "default"}
+release = {features = ["release"], no-default-feature = true}
+test = {features = ["test"], solve-group = "default"}
+test-py310 = {features = ["test", "py310"], solve-group = "test-py310"}
+test-py311 = {features = ["test", "py311"], solve-group = "test-py311"}
+test-py312 = {features = ["test", "py312"], solve-group = "test-py312"}
+test-py313 = {features = ["test", "py313"], solve-group = "test-py313"}
+test-py314 = {features = ["test", "py314"], solve-group = "test-py314"}
+
+[tool.pixi.tasks]
+docs = {cmd = "sphinx-build -W --keep-going -n -b dirhtml docs docs/_build/dirhtml", description = "Build documentation"}
+docs-linkcheck = {cmd = "sphinx-build -W --keep-going -b linkcheck docs docs/_build/linkcheck", description = "Check documentation links"}
+examples-check = {cmd = "pytest -m 'not live' tests/examples", description = "Run documented examples"}
+demos = {cmd = "bash demos/render.sh", description = "Render VHS demos"}
+format = {cmd = "ruff format conda_advise demos tests", description = "Auto-format code"}
+format-check = {cmd = "ruff format --check conda_advise demos tests", description = "Verify formatting"}
+lint = {cmd = "ruff check conda_advise demos tests", description = "Check code style"}
+typecheck = {cmd = "ty check conda_advise demos", description = "Run type checker"}
+
+[tool.pixi.tasks.check]
+depends-on = ["lint", "format-check", "typecheck"]
+description = "Run static checks"
+
+[tool.pixi.feature.test.tasks]
+test = {cmd = "pytest", description = "Run tests"}
+test-cov = {cmd = "pytest --cov=conda_advise --cov-report=term-missing --cov-report=xml", description = "Run tests with coverage"}
+
+[tool.pixi.feature.release.tasks]
+build = {cmd = "python -m build --no-isolation", description = "Build sdist and wheel"}
+check-dist = {cmd = "python -m twine check --strict dist/*", description = "Check distribution metadata"}
