@@ -14,16 +14,7 @@ on:
       - "pyproject.toml"
       - "schema/**"
   pull_request:
-    paths:
-      - ".github/workflows/docs.yml"
-      - "CHANGELOG.md"
-      - "README.md"
-      - "conda_advise/**"
-      - "demos/**"
-      - "docs/**"
-      - "pixi.lock"
-      - "pyproject.toml"
-      - "schema/**"
+    branches: [main]
   workflow_dispatch:
 
 permissions:

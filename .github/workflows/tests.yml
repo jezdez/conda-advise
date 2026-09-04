@@ -21,22 +21,6 @@ on:
       - "tests/**"
   pull_request:
     branches: [main]
-    paths:
-      - ".github/workflows/**"
-      - "CHANGELOG.md"
-      - "CITATION.cff"
-      - "CONTRIBUTING.md"
-      - "LICENSE"
-      - "README.md"
-      - "RELEASING.md"
-      - "conda_advise/**"
-      - "demos/**"
-      - "docs/**"
-      - "pixi.lock"
-      - "pyproject.toml"
-      - "recipe/**"
-      - "schema/**"
-      - "tests/**"
   workflow_dispatch:
 
 permissions:
