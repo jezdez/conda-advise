@@ -97,13 +97,18 @@ python-version = "3.10"
 
 [tool.pixi.workspace]
 channels = ["conda-forge"]
-platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64", "win-64"]
+platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64", "win-64", "win-arm64"]
 
 [tool.pixi.dependencies]
-conda = ">=24.3"
 cvss = ">=3.6"
 packageurl-python = ">=0.16"
 python = ">=3.10"
+
+[tool.pixi.feature.runtime]
+platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64", "win-64"]
+
+[tool.pixi.feature.runtime.dependencies]
+conda = ">=24.3"
 
 [tool.pixi.pypi-dependencies]
 conda-advise = {path = ".", editable = true}
@@ -113,22 +118,47 @@ pre-commit = ">=4.0"
 ruff = ">=0.9"
 ty = ">=0.0.1a7"
 
+[tool.pixi.feature.dev]
+platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64", "win-64"]
+
 [tool.pixi.feature.test.dependencies]
 jsonschema = ">=4.0"
 pytest = ">=8.0"
 pytest-cov = ">=6.0"
 
+[tool.pixi.feature.test]
+platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64", "win-64"]
+
+[tool.pixi.feature.conda-min.dependencies]
+conda = "24.3.*"
+python = "3.10.*"
+
+[tool.pixi.feature.conda-min]
+platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64", "win-64"]
+
 [tool.pixi.feature.py310.dependencies]
 python = "3.10.*"
+
+[tool.pixi.feature.py310]
+platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64", "win-64"]
 
 [tool.pixi.feature.py311.dependencies]
 python = "3.11.*"
 
+[tool.pixi.feature.py311]
+platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64", "win-64"]
+
 [tool.pixi.feature.py312.dependencies]
 python = "3.12.*"
 
+[tool.pixi.feature.py312]
+platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64", "win-64"]
+
 [tool.pixi.feature.py313.dependencies]
 python = "3.13.*"
+
+[tool.pixi.feature.py313]
+platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64", "win-64"]
 
 [tool.pixi.feature.py314.dependencies]
 python = "3.14.*"
@@ -143,38 +173,76 @@ sphinx-design = ">=0.6"
 sphinx-reredirects = ">=0.1"
 sphinx-sitemap = ">=2.5"
 
+[tool.pixi.feature.docs]
+platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64", "win-64"]
+
 [tool.pixi.feature.demo.dependencies]
 bat = ">=0.25"
 vhs = ">=0.10"
 
+[tool.pixi.feature.demo]
+platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64", "win-64"]
+
 [tool.pixi.feature.release.dependencies]
+anaconda-client = ">=1.14.1"
 hatch-vcs = ">=0.2.0"
 hatchling = ">=1.12.2"
 python = "3.13.*"
 python-build = ">=1.2"
+rattler-build = ">=0.75.0"
 twine = ">=6.2"
 
+[tool.pixi.feature.release]
+platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64", "win-64"]
+
+[tool.pixi.feature.win-arm64-native.dependencies]
+cvss = ">=3.6"
+hatch-vcs = ">=0.2.0"
+hatchling = ">=1.12.2"
+packageurl-python = ">=0.16"
+pip = ">=24.0"
+python = "3.14.*"
+python-build = ">=1.2"
+
+[tool.pixi.feature.win-arm64-native]
+platforms = ["win-arm64"]
+
+[tool.pixi.feature.smoke.dependencies]
+conda = ">=24.3"
+cvss = ">=3.6"
+jsonschema = ">=4.0"
+packageurl-python = ">=0.16"
+pip = ">=24.0"
+python = "3.13.*"
+
+[tool.pixi.feature.smoke]
+platforms = ["linux-64"]
+
 [tool.pixi.environments]
-dev = {features = ["dev"], solve-group = "default"}
-docs = {features = ["docs"], solve-group = "default"}
-demo = {features = ["demo"], solve-group = "default"}
+default = {features = ["runtime", "dev", "test", "docs", "demo"], solve-group = "default"}
+dev = {features = ["runtime", "dev", "test", "docs", "demo"], solve-group = "default"}
+docs = {features = ["runtime", "docs"], solve-group = "default"}
+demo = {features = ["runtime", "demo"], solve-group = "default"}
 release = {features = ["release"], no-default-feature = true}
-test = {features = ["test"], solve-group = "default"}
-test-py310 = {features = ["test", "py310"], solve-group = "test-py310"}
-test-py311 = {features = ["test", "py311"], solve-group = "test-py311"}
-test-py312 = {features = ["test", "py312"], solve-group = "test-py312"}
-test-py313 = {features = ["test", "py313"], solve-group = "test-py313"}
-test-py314 = {features = ["test", "py314"], solve-group = "test-py314"}
+smoke = {features = ["smoke"], no-default-feature = true}
+test = {features = ["runtime", "test"], solve-group = "default"}
+test-conda-min = {features = ["runtime", "test", "conda-min"], solve-group = "test-conda-min"}
+test-py310 = {features = ["runtime", "test", "py310"], solve-group = "test-py310"}
+test-py311 = {features = ["runtime", "test", "py311"], solve-group = "test-py311"}
+test-py312 = {features = ["runtime", "test", "py312"], solve-group = "test-py312"}
+test-py313 = {features = ["runtime", "test", "py313"], solve-group = "test-py313"}
+test-py314 = {features = ["runtime", "test", "py314"], solve-group = "test-py314"}
+win-arm64-native = {features = ["win-arm64-native"], no-default-feature = true}
 
 [tool.pixi.tasks]
 docs = {cmd = "sphinx-build -W --keep-going -n -b dirhtml docs docs/_build/dirhtml", description = "Build documentation"}
 docs-linkcheck = {cmd = "sphinx-build -W --keep-going -b linkcheck docs docs/_build/linkcheck", description = "Check documentation links"}
 examples-check = {cmd = "pytest -m 'not live' tests/examples", description = "Run documented examples"}
 demos = {cmd = "bash demos/render.sh", description = "Render VHS demos"}
-format = {cmd = "ruff format conda_advise demos tests", description = "Auto-format code"}
-format-check = {cmd = "ruff format --check conda_advise demos tests", description = "Verify formatting"}
-lint = {cmd = "ruff check conda_advise demos tests", description = "Check code style"}
-typecheck = {cmd = "ty check conda_advise demos", description = "Run type checker"}
+format = {cmd = "ruff format conda_advise demos recipe tests", description = "Auto-format code"}
+format-check = {cmd = "ruff format --check conda_advise demos recipe tests", description = "Verify formatting"}
+lint = {cmd = "ruff check conda_advise demos recipe tests", description = "Check code style"}
+typecheck = {cmd = "ty check conda_advise demos recipe", description = "Run type checker"}
 
 [tool.pixi.tasks.check]
 depends-on = ["lint", "format-check", "typecheck"]
@@ -186,4 +254,6 @@ test-cov = {cmd = "pytest --cov=conda_advise --cov-report=term-missing --cov-rep
 
 [tool.pixi.feature.release.tasks]
 build = {cmd = "python -m build --no-isolation", description = "Build sdist and wheel"}
+build-conda = {cmd = "rattler-build build --recipe recipe/recipe.yaml --channel conda-forge --output-dir conda-dist", description = "Build and test the conda package"}
+check-conda-package = {cmd = "python recipe/check_package.py conda-dist", description = "Check the conda package filename and subdir"}
 check-dist = {cmd = "python -m twine check --strict dist/*", description = "Check distribution metadata"}

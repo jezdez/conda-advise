@@ -8,6 +8,7 @@ htmlcov/
 
 # Build output
 build/
+conda-dist/
 dist/
 docs/_build/
 conda_advise/_version.py
@@ -23,4 +24,3 @@ conda_advise/_version.py
 .DS_Store
 .idea/
 .vscode/
-

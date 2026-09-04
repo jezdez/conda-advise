@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "If you use conda-advise, cite the software and the release you used."
+type: software
+title: conda-advise
+abstract: "Conda plugin for advisory awareness before package installation"
+authors:
+  - family-names: Leidel
+    given-names: Jannis
+    email: jannis@leidel.info
+repository-code: "https://github.com/jezdez/conda-advise"
+url: "https://jezdez.github.io/conda-advise"
+license: BSD-3-Clause

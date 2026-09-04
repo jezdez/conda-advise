@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://jezdez.github.io/conda-advise/sitemap.xml

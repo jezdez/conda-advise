@@ -1,0 +1,55 @@
+schema_version: 1
+
+context:
+  version: ${{ env.get("CONDA_ADVISE_VERSION") }}
+  source_url: ${{ env.get("CONDA_ADVISE_SDIST_URL") }}
+  source_sha256: ${{ env.get("CONDA_ADVISE_SDIST_SHA256") }}
+
+package:
+  name: conda-advise
+  version: ${{ version }}
+
+source:
+  url: ${{ source_url }}
+  sha256: ${{ source_sha256 }}
+
+build:
+  number: 0
+  noarch: python
+  script: python -m pip install . -vv --no-deps --no-build-isolation
+
+requirements:
+  host:
+    - python >=3.10
+    - pip
+    - hatchling >=1.12.2
+    - hatch-vcs >=0.2.0
+  run:
+    - python >=3.10
+    - conda >=24.3
+    - cvss >=3.6
+    - packageurl-python >=0.16
+
+tests:
+  - python:
+      imports:
+        - conda_advise
+      pip_check: true
+  - script:
+      - conda advise --help
+  - script: offline_smoke.py
+    files:
+      recipe:
+        - offline_smoke.py
+
+about:
+  homepage: https://github.com/jezdez/conda-advise
+  repository: https://github.com/jezdez/conda-advise
+  documentation: https://jezdez.github.io/conda-advise
+  license: BSD-3-Clause
+  license_file: LICENSE
+  summary: Conda plugin for advisory awareness before package installation
+
+extra:
+  recipe-maintainers:
+    - jezdez

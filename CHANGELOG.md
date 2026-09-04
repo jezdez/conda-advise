@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - Initial warning-only `conda advise` plugin implementation.
+- `conda advice` alias for the common noun spelling.
+- Reproducible noarch package builds and GitHub environment-gated publication to the `jezdez` Anaconda.org channel.
 
 [Unreleased]: https://github.com/jezdez/conda-advise/commits/main
-

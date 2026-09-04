@@ -1,0 +1,51 @@
+name: Demos
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/demos.yml"
+      - "conda_advise/**"
+      - "demos/**"
+      - "pixi.lock"
+      - "pyproject.toml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  render:
+    name: Render deterministic terminal demos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347 # v0.10.1
+        with:
+          pixi-version: v0.78.0
+          environments: demo
+          cache: true
+      - name: Render demos from local fixtures
+        run: pixi run --locked -e demo demos
+      - name: Check expected formats
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in quickstart post-solve-warning providers; do
+            test -s "demos/${name}.gif"
+            test -s "demos/${name}.mp4"
+          done
+      - name: Upload rendered demos
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: demos
+          path: |
+            demos/*.gif
+            demos/*.mp4
+          if-no-files-found: error

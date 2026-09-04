@@ -1,0 +1,498 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and smoke-test distributions once
+    runs-on: ubuntu-latest
+    permissions:
+      checks: read # Confirm the release commit passed the required workflows.
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347 # v0.10.1
+        with:
+          pixi-version: v0.78.0
+          environments: release smoke
+          cache: true
+      - name: Check version tag
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Release tag must be a canonical bare version." >&2
+            exit 1
+          fi
+          if [[ "$(git cat-file -t "$RELEASE_VERSION")" != "tag" ]]; then
+            echo "Release tag must be annotated." >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "${RELEASE_VERSION}^{commit}" origin/main; then
+            echo "Release tag must point to a commit on main." >&2
+            exit 1
+          fi
+      - name: Require green main checks
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          check_pages="$(gh api --paginate --slurp \
+            "repos/${GH_REPO}/commits/${EXPECTED_SHA}/check-runs?per_page=100")"
+          for check_name in "Tests complete" "Build documentation"; do
+            conclusion="$(jq -r --arg name "$check_name" \
+              '[.[].check_runs[] | select(.name == $name)]
+               | sort_by(.completed_at)
+               | last
+               | .conclusion // "missing"' <<<"$check_pages")"
+            if [[ "$conclusion" != "success" ]]; then
+              echo "Required check '${check_name}' concluded with ${conclusion}." >&2
+              exit 1
+            fi
+          done
+      - name: Build from the lock file
+        run: pixi run --locked -e release build
+      - name: Check distributions
+        run: pixi run --locked -e release check-dist
+      - name: Check filenames and packaged schema
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(dist/*)
+          wheel="dist/conda_advise-${RELEASE_VERSION}-py3-none-any.whl"
+          sdist="dist/conda_advise-${RELEASE_VERSION}.tar.gz"
+          if [[ "${#files[@]}" -ne 2 || ! -f "$wheel" || ! -f "$sdist" ]]; then
+            echo "Expected only ${wheel} and ${sdist}." >&2
+            printf 'Found %s\n' "${files[@]}" >&2
+            exit 1
+          fi
+          unzip -l "$wheel" > wheel-files.txt
+          tar -tf "$sdist" > sdist-files.txt
+          grep -F 'conda_advise/schema/conda-advise-report-v1.schema.json' wheel-files.txt
+          grep -F '/schema/conda-advise-report-v1.schema.json' sdist-files.txt
+          python - "$wheel" "$sdist" "$RELEASE_VERSION" <<'PY'
+          from email.parser import BytesParser
+          from pathlib import Path
+          import sys
+          import tarfile
+          import zipfile
+
+          wheel = Path(sys.argv[1])
+          sdist = Path(sys.argv[2])
+          expected = sys.argv[3]
+
+          with zipfile.ZipFile(wheel) as archive:
+              metadata_path = next(
+                  name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
+              )
+              wheel_metadata = BytesParser().parsebytes(archive.read(metadata_path))
+
+          with tarfile.open(sdist) as archive:
+              metadata_member = next(
+                  member for member in archive.getmembers() if member.name.endswith("/PKG-INFO")
+              )
+              metadata_file = archive.extractfile(metadata_member)
+              assert metadata_file is not None
+              sdist_metadata = BytesParser().parse(metadata_file)
+
+          for artifact, metadata in ((wheel, wheel_metadata), (sdist, sdist_metadata)):
+              if metadata["Name"] != "conda-advise" or metadata["Version"] != expected:
+                  raise SystemExit(
+                      f"{artifact.name} contains {metadata['Name']} {metadata['Version']}, "
+                      f"expected conda-advise {expected}"
+                  )
+          PY
+      - name: Smoke-test the built wheel
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          wheel="$GITHUB_WORKSPACE/dist/conda_advise-${RELEASE_VERSION}-py3-none-any.whl"
+          smoke_dir="$(mktemp -d)"
+          smoke_python="$GITHUB_WORKSPACE/.pixi/envs/smoke/bin/python"
+          "$smoke_python" -m pip install --no-deps "$wheel"
+          "$smoke_python" -c \
+            "import conda_advise; assert conda_advise.__version__ == '$RELEASE_VERSION'"
+          export XDG_CACHE_HOME="$smoke_dir/cache"
+          export CONDARC="$smoke_dir/condarc"
+          "$smoke_python" "$GITHUB_WORKSPACE/demos/fixtures/setup.py" "$smoke_dir" >/dev/null
+          "$smoke_python" "$GITHUB_WORKSPACE/demos/fixtures/server.py" \
+            "$smoke_dir" >"$smoke_dir/server.log" 2>&1 &
+          server_pid=$!
+          cleanup_server() {
+            kill "$server_pid" >/dev/null 2>&1 || true
+          }
+          trap cleanup_server EXIT
+          for attempt in $(seq 1 100); do
+            if curl --silent --fail http://127.0.0.1:8765/health >/dev/null; then
+              break
+            fi
+            if [[ "$attempt" -eq 100 ]]; then
+              echo "Fixture advisory server did not start." >&2
+              exit 1
+            fi
+            sleep 0.05
+          done
+          cd "$smoke_dir"
+          "$smoke_python" -m conda advise --help
+          if "$smoke_python" -m conda advise --prefix "$smoke_dir/prefix" --json > online.json; then
+            online_status=0
+          else
+            online_status=$?
+          fi
+          if [[ "$online_status" -ne 1 ]]; then
+            echo "Expected the fixture advisory to produce exit status 1, got $online_status." >&2
+            exit 1
+          fi
+          kill "$server_pid"
+          wait "$server_pid" || true
+          trap - EXIT
+          if "$smoke_python" -m conda advise \
+            --prefix "$smoke_dir/prefix" \
+            --offline \
+            --json > report.json; then
+            offline_status=0
+          else
+            offline_status=$?
+          fi
+          if [[ "$offline_status" -ne 1 ]]; then
+            echo "Expected cached offline exit status 1, got $offline_status." >&2
+            exit 1
+          fi
+          "$smoke_python" -m jsonschema \
+            -i report.json \
+            "$GITHUB_WORKSPACE/schema/conda-advise-report-v1.schema.json"
+      - name: Upload distributions
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  attest:
+    name: Attest distributions
+    runs-on: ubuntu-latest
+    needs: [build]
+    permissions:
+      artifact-metadata: write # Record metadata for the attested distributions.
+      attestations: write # Publish build provenance for the distributions.
+      contents: read
+      id-token: write # Sign provenance with GitHub's OIDC identity.
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist/
+      - name: Record GitHub build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/*
+
+  create-draft-release:
+    name: Create draft GitHub Release
+    runs-on: ubuntu-latest
+    needs: [attest]
+    permissions:
+      contents: write # Create the draft GitHub Release.
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist/
+      - name: Verify the release tag has not moved
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          remote_sha="$(git ls-remote \
+            "$GITHUB_SERVER_URL/$GH_REPO.git" \
+            "refs/tags/${RELEASE_TAG}^{}" \
+            | awk 'NR == 1 { print $1 }')"
+          if [[ "$remote_sha" != "$EXPECTED_SHA" ]]; then
+            echo "Release tag no longer points to the workflow commit." >&2
+            exit 1
+          fi
+      - name: Create immutable-ready draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(dist/*)
+          if gh release view "$RELEASE_TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            echo "Release ${RELEASE_TAG} already exists." >&2
+            echo "Release immutability is enabled. Create a new tag instead of replacing assets." >&2
+            exit 1
+          fi
+          if test "${#files[@]}" -eq 0; then
+            echo "No distribution assets found." >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" \
+            --draft \
+            --verify-tag \
+            --title "$RELEASE_TAG" \
+            --generate-notes \
+            --repo "$GH_REPO"
+          cleanup_draft() {
+            gh release delete "$RELEASE_TAG" --repo "$GH_REPO" --yes >/dev/null 2>&1 || true
+          }
+          trap cleanup_draft ERR
+          gh release upload "$RELEASE_TAG" "${files[@]}" --repo "$GH_REPO"
+          trap - ERR
+
+  publish-pypi:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    needs: [create-draft-release]
+    environment:
+      name: pypi
+      url: https://pypi.org/p/conda-advise
+    permissions:
+      id-token: write # Exchange the OIDC identity for a PyPI publishing token.
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist/
+      - name: Verify the release tag has not moved
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          remote_sha="$(git ls-remote \
+            "$GITHUB_SERVER_URL/$GH_REPO.git" \
+            "refs/tags/${RELEASE_TAG}^{}" \
+            | awk 'NR == 1 { print $1 }')"
+          if [[ "$remote_sha" != "$EXPECTED_SHA" ]]; then
+            echo "Release tag no longer points to the workflow commit." >&2
+            exit 1
+          fi
+      - name: Publish with Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist/
+          attestations: true
+
+  publish-anaconda:
+    name: Publish to Anaconda.org
+    runs-on: ubuntu-latest
+    needs: [publish-pypi]
+    environment:
+      name: anaconda
+      url: https://anaconda.org/jezdez/conda-advise
+    permissions:
+      contents: read
+    outputs:
+      package_build: ${{ steps.upload.outputs.package_build }}
+      package_filename: ${{ steps.upload.outputs.package_filename }}
+      package_sha256: ${{ steps.upload.outputs.package_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347 # v0.10.1
+        with:
+          pixi-version: v0.78.0
+          environments: release
+          cache: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist/
+      - name: Build conda package from the published source distribution
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          sdist="$GITHUB_WORKSPACE/dist/conda_advise-${RELEASE_VERSION}.tar.gz"
+          test -f "$sdist"
+          export CONDA_ADVISE_VERSION="$RELEASE_VERSION"
+          export CONDA_ADVISE_SDIST_URL="https://pypi.io/packages/source/c/conda-advise/conda_advise-${RELEASE_VERSION}.tar.gz"
+          export CONDA_ADVISE_SDIST_SHA256
+          CONDA_ADVISE_SDIST_SHA256="$(sha256sum "$sdist" | cut -d ' ' -f 1)"
+          pixi run --locked -e release build-conda
+          pixi run --locked -e release check-conda-package
+      - name: Upload conda package to the main label
+        id: upload
+        shell: bash
+        env:
+          ANACONDA_API_TOKEN: ${{ secrets.ANACONDA_API_KEY }}
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mapfile -t packages < <(
+            find conda-dist/noarch \
+              -maxdepth 1 \
+              -type f \
+              -name "conda-advise-${RELEASE_VERSION}-*.conda" \
+              -print
+          )
+          if [[ "${#packages[@]}" -ne 1 ]]; then
+            echo "Expected one noarch conda package, found ${#packages[@]}." >&2
+            exit 1
+          fi
+          remote_sha="$(git ls-remote \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" \
+            "refs/tags/${RELEASE_VERSION}^{}" \
+            | awk 'NR == 1 { print $1 }')"
+          if [[ "$remote_sha" != "$GITHUB_SHA" ]]; then
+            echo "Release tag no longer points to the workflow commit." >&2
+            exit 1
+          fi
+          package_filename="${packages[0]##*/}"
+          package_prefix="conda-advise-${RELEASE_VERSION}-"
+          package_build="${package_filename#"$package_prefix"}"
+          package_build="${package_build%.conda}"
+          package_sha256="$(sha256sum "${packages[0]}" | cut -d ' ' -f 1)"
+          pixi run --locked -e release anaconda org upload \
+            "${packages[0]}" \
+            --user jezdez \
+            --label main \
+            --no-progress
+          printf 'package_build=%s\npackage_filename=%s\npackage_sha256=%s\n' \
+            "$package_build" \
+            "$package_filename" \
+            "$package_sha256" >> "$GITHUB_OUTPUT"
+
+  verify-anaconda:
+    name: Verify Anaconda.org package
+    runs-on: ubuntu-latest
+    needs: [publish-anaconda]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347 # v0.10.1
+        with:
+          pixi-version: v0.78.0
+          environments: smoke
+          cache: true
+      - name: Install from the public main label
+        shell: bash
+        env:
+          EXPECTED_PACKAGE_BUILD: ${{ needs.publish-anaconda.outputs.package_build }}
+          EXPECTED_PACKAGE_FILENAME: ${{ needs.publish-anaconda.outputs.package_filename }}
+          EXPECTED_PACKAGE_SHA256: ${{ needs.publish-anaconda.outputs.package_sha256 }}
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          channel="https://conda.anaconda.org/jezdez/label/main"
+          search_result="$RUNNER_TEMP/anaconda-search.json"
+          search_error="$RUNNER_TEMP/anaconda-search.stderr"
+          available=false
+          for attempt in $(seq 1 20); do
+            if pixi run --locked -e smoke conda search \
+              --override-channels \
+              --channel "$channel" \
+              --json \
+              "conda-advise=${RELEASE_VERSION}" \
+              >"$search_result" 2>"$search_error"; then
+              available=true
+              break
+            fi
+            echo "Waiting for Anaconda.org repodata, attempt ${attempt} of 20." >&2
+            sleep 15
+          done
+          if [[ "$available" != true ]]; then
+            echo "conda-advise ${RELEASE_VERSION} did not appear on the main label." >&2
+            cat "$search_error" >&2
+            exit 1
+          fi
+          python - "$search_result" <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import sys
+
+          records = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          matches = [
+              record
+              for record in records.get("conda-advise", [])
+              if record.get("version") == os.environ["RELEASE_VERSION"]
+              and record.get("build") == os.environ["EXPECTED_PACKAGE_BUILD"]
+              and record.get("fn") == os.environ["EXPECTED_PACKAGE_FILENAME"]
+              and record.get("sha256") == os.environ["EXPECTED_PACKAGE_SHA256"]
+          ]
+          if len(matches) != 1:
+              raise SystemExit("Anaconda.org repodata does not contain the uploaded artifact")
+          PY
+          consumer_prefix="$RUNNER_TEMP/conda-advise-consumer"
+          pixi run --locked -e smoke conda create \
+            --yes \
+            --prefix "$consumer_prefix" \
+            --strict-channel-priority \
+            --override-channels \
+            --channel "$channel" \
+            --channel conda-forge \
+            "conda-advise=${RELEASE_VERSION}=${EXPECTED_PACKAGE_BUILD}" \
+            "conda>=24.3"
+          pixi run --locked -e smoke conda run --prefix "$consumer_prefix" \
+            python -c \
+            "import conda_advise; assert conda_advise.__version__ == '$RELEASE_VERSION'"
+          pixi run --locked -e smoke conda run --prefix "$consumer_prefix" \
+            conda advise --help
+          pixi run --locked -e smoke conda run --prefix "$consumer_prefix" \
+            python "$GITHUB_WORKSPACE/recipe/offline_smoke.py"
+
+  publish-github-release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: [publish-pypi, verify-anaconda]
+    permissions:
+      contents: write # Publish the draft GitHub Release.
+    steps:
+      - name: Verify the release tag has not moved
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          remote_sha="$(git ls-remote \
+            "$GITHUB_SERVER_URL/$GH_REPO.git" \
+            "refs/tags/${RELEASE_TAG}^{}" \
+            | awk 'NR == 1 { print $1 }')"
+          if [[ "$remote_sha" != "$EXPECTED_SHA" ]]; then
+            echo "Release tag no longer points to the workflow commit." >&2
+            exit 1
+          fi
+      - name: Publish draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release edit "$RELEASE_TAG" --repo "$GH_REPO" --draft=false

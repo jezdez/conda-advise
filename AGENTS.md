@@ -13,6 +13,7 @@
 - Use relative imports inside `conda_advise`. Absolute package imports belong in tests and entry points.
 - Use lazy imports only for startup-sensitive plugin hooks, optional dependencies, or real import cycles. Put other imports at module scope.
 - Prefer the standard library and existing conda APIs before adding dependencies.
+- Use Pixi as the canonical development environment and run project commands through committed Pixi tasks.
 - Use `conda.gateways.connection.session.get_session()` for every HTTP request. Do not construct a separate requests session or add another HTTP client.
 - Pin minimum dependency versions in `pyproject.toml`, not exact runtime versions.
 - After changing Pixi dependencies, features, tasks, environments, or workspace settings, run `pixi lock` and commit `pixi.lock` with the change.
@@ -60,11 +61,11 @@
 
 - Maintain `CHANGELOG.md` with an `Unreleased` section and prepare releases through reviewed changes on `main`.
 - Release from annotated bare version tags such as `0.1.0`.
-- Build the wheel and source distribution once, attest those files, attach them to a draft GitHub release, publish the same files through PyPI Trusted Publishing, then publish the GitHub release.
+- Build the wheel and source distribution once, attest those files, attach them to a draft GitHub release, and publish the same files through PyPI Trusted Publishing.
+- Build the Anaconda.org package from that exact PyPI source distribution, upload it without replacement flags, verify a clean installation, then publish the GitHub release.
 - Pin every third-party GitHub Action to a complete commit SHA with the release version in a comment.
 - Never replace published assets or reuse a released tag.
 - Keep release workflows focused on orchestration. Put reusable checks in Pixi tasks and normal CI.
 - Write GitHub issue and pull request prose as one physical line per paragraph or bullet. Let GitHub wrap it.
 - Pull request descriptions explain what changed and why. Do not include validation commands or verification output.
 - Never prefix pull request titles with `[codex]`.
-

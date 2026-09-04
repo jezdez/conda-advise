@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-01T12:00:00Z",
+  "target": "/example/prefix",
+  "provider": "osv",
+  "provider_experimental": false,
+  "minimum_severity": "high",
+  "subjects": [
+    {
+      "id": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "name": "demo-package",
+      "version": "1.0.0",
+      "build": "py_0",
+      "build_number": 0,
+      "subdir": "noarch",
+      "channel": "conda-forge",
+      "url": "https://conda.anaconda.org/conda-forge/noarch/demo-package-1.0.0-py_0.conda",
+      "filename": "demo-package-1.0.0-py_0.conda",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "md5": "22222222222222222222222222222222"
+    }
+  ],
+  "coverage": [
+    {
+      "subject": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "provider": "osv",
+      "status": "complete",
+      "reason": null,
+      "checked_at": "2026-08-01T12:00:00Z",
+      "stale": false
+    }
+  ],
+  "findings": [
+    {
+      "subject": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "id": "CVE-2026-0001",
+      "aliases": ["GHSA-demo-0001-0001"],
+      "summary": "Demo package accepts an unsafe example input",
+      "severity": "critical",
+      "score": 9.8,
+      "fixes": ["1.0.1"],
+      "evidence": [
+        {
+          "type": "artifact_component",
+          "provider": "osv",
+          "artifact_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "component_purl": "pkg:pypi/demo-package@1.0.0"
+        }
+      ],
+      "source_records": [
+        {
+          "provider": "osv",
+          "id": "GHSA-demo-0001-0001",
+          "modified": "2026-08-01T12:00:00Z",
+          "published": "2026-07-31T12:00:00Z",
+          "withdrawn": null,
+          "url": "https://osv.dev/vulnerability/GHSA-demo-0001-0001",
+          "severity": [
+            {
+              "type": "CVSS_V3",
+              "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+              "source": null,
+              "base_score": 9.8
+            }
+          ],
+          "fixes": ["1.0.1"],
+          "data": {
+            "id": "GHSA-demo-0001-0001",
+            "modified": "2026-08-01T12:00:00Z"
+          }
+        }
+      ],
+      "kev": true,
+      "stale": false
+    }
+  ],
+  "failures": [],
+  "summary": {
+    "checked": 1,
+    "mapped": 1,
+    "unmapped": 0,
+    "not_checked": 0,
+    "incomplete": 0,
+    "total_matches": 1,
+    "qualifying_matches": 1
+  }
+}

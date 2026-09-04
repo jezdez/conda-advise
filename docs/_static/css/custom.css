@@ -1,0 +1,8 @@
+.sd-card-title {
+  font-weight: 600;
+}
+
+.advisory-evidence {
+  border-inline-start: 0.25rem solid var(--pst-color-warning);
+  padding-inline-start: 1rem;
+}

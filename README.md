@@ -2,6 +2,7 @@
 
 `conda-advise` checks public conda-forge packages for matching security advisories.
 It adds a manual `conda advise` command and a warning-only post-solve check before conda changes an environment.
+The common `conda advice` spelling is accepted as a command alias.
 
 The project is alpha software and has no published package release yet.
 Run it from the repository's locked development environment without changing a normal conda installation.
@@ -17,9 +18,15 @@ Selecting it sends those names and versions to Prefix.
 These results are advisory matches, not proof that vulnerable code is reachable or remains unpatched in a conda build.
 An unmapped package, an unavailable provider, stale data, or an empty result does not establish that a package is unaffected.
 
+![Run a conda advise scan](https://raw.githubusercontent.com/jezdez/conda-advise/main/demos/quickstart.gif)
+
+The same warning appears during a transaction without adding another prompt:
+
+![See a post-solve advisory warning](https://raw.githubusercontent.com/jezdez/conda-advise/main/demos/post-solve-warning.gif)
+
 ## Run from source
 
-Install [Pixi](https://pixi.sh), clone the repository, and confirm that conda discovers the plugin:
+Install [Pixi](https://pixi.prefix.dev/), clone the repository, and confirm that conda discovers the plugin:
 
 ```console
 git clone https://github.com/jezdez/conda-advise.git

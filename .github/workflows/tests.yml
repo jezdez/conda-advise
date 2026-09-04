@@ -1,0 +1,291 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - "CHANGELOG.md"
+      - "CITATION.cff"
+      - "CONTRIBUTING.md"
+      - "LICENSE"
+      - "README.md"
+      - "RELEASING.md"
+      - "conda_advise/**"
+      - "demos/**"
+      - "docs/**"
+      - "pixi.lock"
+      - "pyproject.toml"
+      - "recipe/**"
+      - "schema/**"
+      - "tests/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - "CHANGELOG.md"
+      - "CITATION.cff"
+      - "CONTRIBUTING.md"
+      - "LICENSE"
+      - "README.md"
+      - "RELEASING.md"
+      - "conda_advise/**"
+      - "demos/**"
+      - "docs/**"
+      - "pixi.lock"
+      - "pyproject.toml"
+      - "recipe/**"
+      - "schema/**"
+      - "tests/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  static-checks:
+    name: Static checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347 # v0.10.1
+        with:
+          pixi-version: v0.78.0
+          environments: dev
+          cache: true
+      - name: Run static checks
+        run: pixi run --locked -e dev check
+
+  tests:
+    name: ${{ matrix.os }}, Python 3.${{ matrix.python-minor }}
+    runs-on: ${{ matrix.os }}
+    env:
+      PIXI_ENVIRONMENT: test-py3${{ matrix.python-minor }}
+      CONDA_NOTIFY_OUTDATED_CONDA: "false"
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-minor: ["10", "11", "12", "13", "14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347 # v0.10.1
+        with:
+          pixi-version: v0.78.0
+          environments: ${{ env.PIXI_ENVIRONMENT }}
+          cache: true
+      - name: Run tests
+        shell: bash
+        run: pixi run --locked -e "$PIXI_ENVIRONMENT" test
+
+  minimum-conda:
+    name: Ubuntu, conda 24.3, Python 3.10
+    runs-on: ubuntu-latest
+    env:
+      CONDA_NOTIFY_OUTDATED_CONDA: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347 # v0.10.1
+        with:
+          pixi-version: v0.78.0
+          environments: test-conda-min
+          cache: true
+      - name: Run tests against the minimum supported conda
+        run: pixi run --locked -e test-conda-min test
+
+  windows-arm64-tests:
+    name: windows-11-arm, Python 3.${{ matrix.python-minor }} (win-64 through Prism)
+    runs-on: windows-11-arm
+    env:
+      PIXI_ENVIRONMENT: test-py3${{ matrix.python-minor }}
+      CONDA_NOTIFY_OUTDATED_CONDA: "false"
+    strategy:
+      fail-fast: false
+      matrix:
+        python-minor: ["10", "11", "12", "13", "14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347 # v0.10.1
+        with:
+          pixi-version: v0.78.0
+          run-install: false
+          cache: false
+      # Conda itself is not available from conda-forge for win-arm64.
+      # The Windows 11 ARM runner executes the locked win-64 environment through Prism.
+      - name: Run tests through Prism
+        shell: pwsh
+        run: pixi run --locked --platform win-64 -e "$env:PIXI_ENVIRONMENT" test
+
+  windows-arm64-native-canary:
+    name: Windows ARM64 native import canary
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347 # v0.10.1
+        with:
+          pixi-version: v0.78.0
+          environments: win-arm64-native
+          cache: true
+      # Conda is not available from conda-forge for win-arm64, so this native
+      # canary checks wheel installation and the conda-independent model import only.
+      - name: Build, install, and import the wheel natively
+        shell: pwsh
+        run: |
+          pixi run --locked -e win-arm64-native python -m build --wheel --no-isolation
+          $wheels = @(Get-ChildItem -Path dist -Filter '*.whl')
+          if ($wheels.Count -ne 1) {
+            throw "Expected one wheel, found $($wheels.Count)."
+          }
+          pixi run --locked -e win-arm64-native python -m pip install --no-deps $wheels[0].FullName
+          Push-Location $env:RUNNER_TEMP
+          try {
+            pixi run --locked --manifest-path "$env:GITHUB_WORKSPACE/pyproject.toml" -e win-arm64-native python -c "import platform; from pathlib import Path; import conda_advise; from conda_advise.models import AdvisoryReport; assert platform.machine().lower() in {'arm64', 'aarch64'}; assert 'site-packages' in Path(conda_advise.__file__).resolve().parts; assert AdvisoryReport"
+          }
+          finally {
+            Pop-Location
+          }
+
+  coverage:
+    name: Coverage, Ubuntu, Python 3.13
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # Authenticate the upload to Codecov without a stored token.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347 # v0.10.1
+        with:
+          pixi-version: v0.78.0
+          environments: test-py313
+          cache: true
+      - name: Run tests with branch coverage
+        run: pixi run --locked -e test-py313 test-cov
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          files: coverage.xml
+          fail_ci_if_error: true
+          use_oidc: true
+
+  examples:
+    name: Documented examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347 # v0.10.1
+        with:
+          pixi-version: v0.78.0
+          environments: test
+          cache: true
+      - name: Run documented examples
+        run: pixi run --locked -e test examples-check
+
+  distributions:
+    name: Check distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347 # v0.10.1
+        with:
+          pixi-version: v0.78.0
+          environments: release
+          cache: true
+      - name: Build distributions
+        run: pixi run --locked -e release build
+      - name: Check distributions
+        run: pixi run --locked -e release check-dist
+      - name: Check schema is packaged
+        shell: bash
+        run: |
+          set -euo pipefail
+          wheel="$(find dist -maxdepth 1 -name '*.whl' -print -quit)"
+          sdist="$(find dist -maxdepth 1 -name '*.tar.gz' -print -quit)"
+          unzip -l "$wheel" > wheel-files.txt
+          tar -tf "$sdist" > sdist-files.txt
+          grep -F 'conda_advise/schema/conda-advise-report-v1.schema.json' wheel-files.txt
+          grep -F '/schema/conda-advise-report-v1.schema.json' sdist-files.txt
+      - name: Build and test conda package from the local source distribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdist="$(find "$GITHUB_WORKSPACE/dist" -maxdepth 1 -name 'conda_advise-*.tar.gz' -print -quit)"
+          test -f "$sdist"
+          filename="$(basename "$sdist" .tar.gz)"
+          export CONDA_ADVISE_VERSION="${filename#conda_advise-}"
+          export CONDA_ADVISE_SDIST_URL="file://$sdist"
+          export CONDA_ADVISE_SDIST_SHA256
+          CONDA_ADVISE_SDIST_SHA256="$(sha256sum "$sdist" | cut -d ' ' -f 1)"
+          pixi run --locked -e release build-conda
+          pixi run --locked -e release check-conda-package
+
+  tests-complete:
+    name: Tests complete
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    needs:
+      - static-checks
+      - tests
+      - minimum-conda
+      - windows-arm64-tests
+      - windows-arm64-native-canary
+      - coverage
+      - examples
+      - distributions
+    steps:
+      - name: Require every test job to succeed
+        shell: bash
+        env:
+          STATIC_CHECKS: ${{ needs.static-checks.result }}
+          TESTS: ${{ needs.tests.result }}
+          MINIMUM_CONDA: ${{ needs.minimum-conda.result }}
+          WINDOWS_ARM64: ${{ needs.windows-arm64-tests.result }}
+          WINDOWS_ARM64_NATIVE: ${{ needs.windows-arm64-native-canary.result }}
+          COVERAGE: ${{ needs.coverage.result }}
+          EXAMPLES: ${{ needs.examples.result }}
+          DISTRIBUTIONS: ${{ needs.distributions.result }}
+        run: |
+          set -euo pipefail
+          results=(
+            "$STATIC_CHECKS"
+            "$TESTS"
+            "$MINIMUM_CONDA"
+            "$WINDOWS_ARM64"
+            "$WINDOWS_ARM64_NATIVE"
+            "$COVERAGE"
+            "$EXAMPLES"
+            "$DISTRIBUTIONS"
+          )
+          for result in "${results[@]}"; do
+            if [[ "$result" != "success" ]]; then
+              echo "Required test job concluded with ${result}." >&2
+              exit 1
+            fi
+          done
