@@ -41,7 +41,7 @@ Without either option, conda's active or default prefix is used.
 | `--refresh` | Bypass fresh query entries and request current data |
 
 `--offline` and `--refresh` cannot be combined.
-`basilisk` is experimental and transmits eligible conda-forge package names and versions to Prefix.
+`basilisk` is experimental and transmits names and versions from records whose sanitized artifact URLs match the configured allowed origins to Prefix.
 
 ## Output
 
@@ -49,7 +49,7 @@ Without either option, conda's active or default prefix is used.
 | --- | --- |
 | `--json` | Write one `conda-advise-report-v1` document to stdout |
 
-Conda's standard networking and console options are also accepted through its parser helpers.
+conda's standard networking and console options are also accepted through its parser helpers.
 The human report uses Rich to group findings by artifact and present coverage and provider failures as readable tables.
 Color supplements written severity and status labels, and redirected output contains no terminal escape sequences.
 The JSON report is the supported automation interface.
@@ -58,8 +58,8 @@ The JSON report is the supported automation interface.
 
 | Status | Meaning |
 | --- | --- |
-| `0` | The selected provider completed and no match met the threshold |
-| `1` | One or more matches met the threshold |
-| `2` | The target was invalid or attempted provider work was incomplete |
+| `0` | No attempted lookup was incomplete and no match met the threshold. Some subjects may remain `not_checked` |
+| `1` | One or more matches met the threshold and no attempted lookup was incomplete |
+| `2` | Target selection, usage, scanning, or JSON rendering failed, or provider or CISA KEV work was incomplete. This status takes precedence over qualifying matches |
 
 Unmapped artifacts use `not_checked` coverage and do not alone force status 2.

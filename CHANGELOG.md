@@ -11,6 +11,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Initial warning-only `conda advise` plugin implementation.
 - `conda advice` alias for the common noun spelling.
 - Rich terminal reports with accessible text labels and structured advisory, coverage, and failure output.
-- Reproducible noarch package builds and GitHub environment-gated publication to the `jezdez` Anaconda.org channel.
+- Locked noarch package builds and GitHub environment-gated publication to the `jezdez` Anaconda.org channel.
+
+### Changed
+
+- Made interactive post-solve advisory warnings visually distinct from conda transaction output while preserving plain stderr output for logs.
+- Corrected documentation about provider eligibility, coverage, exit statuses, post-solve timing, cache behavior, and untrusted provider data.
 
 [Unreleased]: https://github.com/jezdez/conda-advise/commits/main

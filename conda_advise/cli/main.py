@@ -28,14 +28,17 @@ def configure_parser(parser: ArgumentParser) -> None:
         choices=PROVIDERS,
         help=(
             "Select the advisory provider. The default is osv. The experimental "
-            "basilisk provider sends eligible conda-forge package names and versions "
-            "to Prefix.dev."
+            "basilisk provider sends names and versions from records whose sanitized "
+            "package URL matches the configured allowed origins to Prefix.dev."
         ),
     )
     parser.add_argument(
         "--minimum-severity",
         choices=SEVERITIES,
-        help="Minimum severity that produces a finding exit status.",
+        help=(
+            "Minimum advisory severity that qualifies a match. "
+            "Matches enriched from CISA KEV always qualify."
+        ),
     )
     parser.add_argument(
         "--refresh",
@@ -50,7 +53,7 @@ def build_parser() -> ArgumentParser:
     """Build a standalone parser for documentation and direct tests."""
     parser = ArgumentParser(
         prog="conda advise",
-        description="Report known advisories for conda packages.",
+        description="Report advisory matches and coverage for a conda environment.",
     )
     configure_parser(parser)
     return parser

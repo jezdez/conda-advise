@@ -22,7 +22,7 @@ Other `not_checked` subjects are counted separately.
 | Code | Status | Meaning |
 | --- | --- | --- |
 | no reason | `complete` | Provider work completed |
-| `unsupported_origin` | `not_checked` | The artifact origin was not an allowed public conda-forge origin |
+| `unsupported_origin` | `not_checked` | The artifact origin was not in the configured allowed-origin list |
 | `unrecognized_record` | `not_checked` | The package name, version, or conda platform directory was not recognized |
 | `missing_sha256` | `not_checked` | The `osv` provider requires an artifact SHA-256 |
 | `component_not_mapped` | `not_checked` | Parselmouth returned no mapping for the artifact hash |
@@ -30,7 +30,7 @@ Other `not_checked` subjects are counted separately.
 | `offline_cache_miss` | `incomplete` | Offline mode had no eligible cached result or used an incomplete stale fallback |
 | `deadline_exceeded` | `incomplete` | The total scan budget expired |
 | `request_failed` | `incomplete` | A provider request failed |
-| `invalid_response` | `incomplete` | A provider response could not be validated |
+| `invalid_response` | `incomplete` | A provider response or cached provider result could not be validated |
 
 ## Diagnostic reason codes
 

@@ -2,6 +2,8 @@
 
 One provider runs per scan.
 CISA KEV is shared enrichment and is not a provider.
+The default allowed-origin list contains the canonical conda-forge and Prefix mirror URL prefixes.
+Adding an origin authorizes recognized records below that URL path for provider lookup, including private records if the configured path contains them.
 
 ## `osv`
 
@@ -9,7 +11,7 @@ Status
 : Default
 
 Input selection
-: Exact artifacts from recognized public conda-forge origins that carry SHA-256
+: Records that carry SHA-256 and whose sanitized artifact URLs match the configured allowed-origin list
 
 Requests
 : Artifact SHA-256 to Parselmouth, then normalized PyPI component name and exact version to OSV
@@ -17,7 +19,7 @@ Requests
 Evidence
 : `artifact_component`
 
-The Parselmouth response identifies Python distributions found inside the exact conda artifact.
+The Parselmouth response associates Python distributions as components of the exact conda artifact.
 The OSV query determines whether the reported component name and version match an advisory's affected-version ranges.
 
 OSV imports the [PyPA advisory database](https://github.com/pypa/advisory-database) and the other databases in its [source inventory](https://google.github.io/osv.dev/data/).
@@ -32,7 +34,7 @@ Status
 : Experimental and opt-in
 
 Input selection
-: Package names and versions from recognized public conda-forge origins
+: Package names and versions from recognized records whose sanitized artifact URLs match the configured allowed-origin list
 
 Requests
 : One or more requests to Prefix's [Basilisk API](https://api.basilisk.prefix.dev/openapi.json), with at most 1,000 unique conda PURL queries per batch

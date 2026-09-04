@@ -33,14 +33,17 @@ conda config --set plugins.conda_advise_minimum_severity high
 Valid values are `low`, `medium`, `high`, and `critical`.
 A CISA KEV match always qualifies for a warning even when its calculated severity is below the configured threshold.
 
-Change the total network budget, in seconds:
+Change the advisory scan deadline, in seconds:
 
 ```console
 conda config --set plugins.conda_advise_timeout_seconds 8
 ```
 
 The allowed range is 1 through 30 seconds and the default is 5.
-When the deadline expires, the hook reports incomplete coverage and lets conda continue.
+The deadline starts when package-record scanning begins and includes subject normalization, cache access, provider requests, and optional KEV enrichment.
+When it expires, the hook reports incomplete coverage and lets conda continue.
+The deadline stops the scan from waiting for unfinished requests but does not terminate an HTTP worker that is already running.
+Such a worker may finish after the report but cannot change it.
 
 For conda 24.3 through 25.3, configure the same values directly:
 
@@ -52,6 +55,7 @@ plugins:
 ```
 
 The integration remains warning-only during normal installs, updates, dry runs, and commands using `-y`.
-It never adds another prompt or turns a provider failure into a failed transaction.
+The hook runs synchronously after solving and before conda creates the transaction, so it can delay the command while work uses the configured deadline.
+It never adds another prompt and catches ordinary scan exceptions, so normal provider failures do not abort the transaction.
 
 ![post-solve warning](../../demos/post-solve-warning.gif)

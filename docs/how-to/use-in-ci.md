@@ -16,9 +16,9 @@ The exit statuses are:
 
 | Status | Meaning |
 | --- | --- |
-| `0` | The provider completed and no finding met the threshold |
-| `1` | At least one finding met the threshold |
-| `2` | The target was invalid or attempted provider work was incomplete |
+| `0` | No attempted lookup was incomplete and no finding met the threshold. Some subjects may remain `not_checked` |
+| `1` | At least one finding met the threshold and no attempted lookup was incomplete |
+| `2` | Target selection, usage, scanning, or JSON rendering failed, or provider or CISA KEV work was incomplete. This status takes precedence over qualifying findings |
 
 Choose one of these policies:
 
@@ -29,7 +29,7 @@ Choose one of these policies:
 
 The awareness policy fits an initial rollout because existing advisory matches do not immediately block development.
 The gate policy is appropriate only after maintainers have reviewed existing results and decided that the configured threshold should block the job.
-In both policies, status `2` fails because an incomplete attempted query must not look like a clean result.
+In both policies, status `2` fails because command or scan failures and incomplete provider or KEV work must not look like a clean result.
 
 An unmapped artifact is `not_checked` and does not by itself produce status `2`.
 Your policy must still decide whether the `unmapped` and `not_checked` counts are acceptable.
@@ -173,6 +173,7 @@ jobs:
           printf 'status=%s\n' "$advise_status" >> "$GITHUB_OUTPUT"
 
       - name: Validate the JSON structure
+        id: validate
         if: ${{ !cancelled() }}
         shell: bash
         env:
@@ -209,7 +210,7 @@ jobs:
           retention-days: 14
 
       - name: Add the job summary
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.validate.outcome == 'success' }}
         shell: bash
         env:
           ADVISE_ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
@@ -274,7 +275,7 @@ jobs:
                       ]
                   )
               else:
-                  lines.append(f"| Error | {cell(report['error']['message'])} |")
+                  lines.append("| Result | The command returned an error document. Review the scanner log. |")
           artifact_url = os.environ.get("ADVISE_ARTIFACT_URL")
           if artifact_url:
               lines.extend(["", f"[Download the complete JSON report]({artifact_url})"])
@@ -294,7 +295,12 @@ jobs:
         shell: bash
         env:
           ADVISE_STATUS: ${{ steps.scan.outputs.status }}
+          ADVISE_VALIDATION: ${{ steps.validate.outcome }}
         run: |
+          if [ "$ADVISE_VALIDATION" != "success" ]; then
+            echo "::error::The conda advisory report did not pass schema validation"
+            exit 2
+          fi
           if [ "$ADVISE_POLICY" != "awareness" ] && [ "$ADVISE_POLICY" != "gate" ]; then
             echo "::error::Unknown conda-advise policy: $ADVISE_POLICY"
             exit 64
@@ -319,7 +325,8 @@ jobs:
 ```
 
 The scan step records the status and finishes successfully so later steps can publish the report.
-The upload and summary steps use GitHub's recommended [`!cancelled()` status check](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#status-check-functions), which still runs after a previous failure but does not continue work after cancellation.
+The upload step uses GitHub's recommended [`!cancelled()` status check](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#status-check-functions), which still runs after a previous failure but does not continue work after cancellation.
+The summary requires successful schema validation before it reads report fields.
 The final step is the only place that converts the recorded scanner result into the selected CI policy.
 
 When the artifact audience is acceptable, put the complete JSON document in an artifact rather than the job log.
@@ -329,6 +336,10 @@ The concise table uses [`GITHUB_STEP_SUMMARY`](https://docs.github.com/en/action
 Review who can download workflow artifacts before uploading the full report.
 It contains the exact credential-free package inventory, including names, versions, builds, filenames, hashes, and sanitized origins for private or unrecognized records that remain `not_checked`.
 If that inventory is sensitive, omit the upload or send the report to storage with the required access controls while retaining a non-sensitive job summary.
+
+Advisory summaries, aliases, fix versions, URLs, error messages, and values under `source_records[].data` are provider-controlled input.
+Do not interpolate the full report or those strings into workflow commands, logs, HTML, Markdown, or shell code without escaping them for that output context.
+After schema validation, the example summary renders only local enumerations, booleans, counts, and the captured command status.
 
 ## Scan pull requests and on a schedule
 

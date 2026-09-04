@@ -13,7 +13,7 @@ It does not infer identity from a package name alone.
 
 ## Artifact-component evidence
 
-The default provider first asks Parselmouth which Python distributions were found inside an exact conda archive.
+The default provider first asks Parselmouth which Python distributions it associates as components of an exact conda archive.
 Each returned component is tied to the artifact SHA-256 and represented by a PyPI package URL.
 
 This follows the distinction documented in [purl-associator PR #279](https://github.com/prefix-dev/purl-associator/pull/279).
@@ -37,11 +37,13 @@ Records are merged only when they have an identical advisory ID or are connected
 OSV `related` and `upstream` links do not merge findings.
 
 The display identifier prefers CVE, then GHSA, then the provider-native identifier.
-Every underlying source record and alias remains available in JSON.
+Every retained active source record and alias remains available in JSON.
+Advisory details with a nonempty `withdrawn` value are excluded before findings are built.
 
 OSV commonly supplies CVSS vectors rather than scores.
 `conda-advise` calculates their scores with the `cvss` Python package and retains the original vectors.
-The highest numeric score controls threshold filtering.
+When at least one valid CVSS score is present, the highest score controls threshold filtering.
+Otherwise the client falls back to recognized provider severity labels.
 KEV membership always meets the warning threshold because CISA has recorded exploitation in the wild.
 
 ## Fix versions

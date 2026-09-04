@@ -1,7 +1,7 @@
 # Install conda-advise
 
 `conda-advise` must be installed in the Python environment that owns the `conda` executable.
-Conda discovers plugins from that environment.
+conda discovers plugins from that environment.
 A plugin installed in an unrelated named environment is not visible to another conda installation.
 
 :::{warning}
@@ -48,11 +48,12 @@ pixi run --locked -e dev conda advise --prefix /path/to/environment
 ## Wait for a supported installation
 
 PyPI and conda-forge commands will be added only after each package is publicly available and verified from a clean environment.
-The PyPI distribution intentionally omits conda as a dependency because conda is not published there.
+The PyPI distribution intentionally omits conda as a dependency.
+The old, yanked `conda` project on PyPI is unsupported, and supported conda releases are not distributed through PyPI.
 Future installation instructions will still require a conda-owning environment.
 
 ## Windows on ARM64
 
 GitHub provides a native Windows 11 ARM64 runner, and `conda-advise` runs a native wheel-install and model-import canary there from the locked `win-arm64-native` Pixi environment.
-Conda itself is not currently available from the ordinary conda-forge `win-arm64` subdir, so the complete plugin suite on that runner uses the locked `win-64` environment through Windows Prism emulation.
+conda itself is not currently available from the ordinary conda-forge `win-arm64` subdir, so the complete plugin suite on that runner uses the locked `win-64` environment through Windows Prism emulation.
 This does not claim native conda plugin integration on Windows ARM64.

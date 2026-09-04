@@ -10,6 +10,7 @@ from unicodedata import category
 
 from rich import box
 from rich.console import Console, Group
+from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from rich.tree import Tree
@@ -132,6 +133,45 @@ def render_hook_summary(report: AdvisoryReport) -> str:
     if report.has_incomplete:
         return f"conda-advise: advisory coverage{coverage_source} is incomplete."
     return ""
+
+
+def render_hook_warning(
+    report: AdvisoryReport,
+    *,
+    stream: TextIO | None = None,
+    rich_output: bool = True,
+) -> None:
+    """Write a conspicuous post-solve warning without touching stdout."""
+    summary = render_hook_summary(report)
+    if not summary:
+        return
+
+    output = stream if stream is not None else sys.stderr
+    if not rich_output or not output.isatty():
+        print(summary, file=output)
+        return
+
+    title = (
+        "CONDA ADVISORY WARNING"
+        if report.qualifying_findings
+        else "CONDA ADVISORY COVERAGE INCOMPLETE"
+    )
+    console = Console(
+        file=output,
+        highlight=False,
+        markup=False,
+        force_terminal=True,
+    )
+    console.print(
+        Panel(
+            Text(_terminal_text(summary)),
+            title=Text(title, style="bold black on yellow"),
+            title_align="left",
+            border_style="bold yellow",
+            box=box.ASCII,
+            padding=(0, 1),
+        )
+    )
 
 
 def apply_metadata_tags(

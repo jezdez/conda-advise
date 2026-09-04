@@ -49,7 +49,7 @@ about:
   documentation: https://jezdez.github.io/conda-advise
   license: BSD-3-Clause
   license_file: LICENSE
-  summary: Conda plugin for advisory awareness before package installation
+  summary: Conda plugin for advisory reports and post-solve warnings
 
 extra:
   recipe-maintainers:

@@ -1,7 +1,8 @@
 # Cache and freshness
 
 The post-solve hook has a short deadline, while provider data changes less frequently than conda transactions.
-A process-safe SQLite cache keeps repeated checks fast and makes limited offline reporting possible.
+A SQLite cache uses write-ahead logging and a busy timeout for normal concurrent access.
+It keeps repeated checks fast and makes limited offline reporting possible.
 
 ## Fresh entries
 
@@ -25,6 +26,8 @@ A missing current result therefore becomes `not_checked` or `incomplete` instead
 The database uses write-ahead logging and a busy timeout.
 Network workers return typed results to one coordinating thread, which performs cache writes and reporting.
 Workers that finish after the scan deadline cannot alter the completed report.
+The deadline stops waiting and requests cancellation of queued work, but it does not terminate an HTTP worker that is already running.
 
 If the database is corrupt, `conda-advise` replaces it and continues without cached evidence.
-The post-solve hook still lets conda continue.
+Corruption recovery renames the database and removes its write-ahead-log sidecars without a separate interprocess recovery lock.
+Normal cache failures do not abort a post-solve transaction.

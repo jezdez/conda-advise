@@ -26,7 +26,7 @@ conda config --set plugins.conda_advise_provider basilisk
 ```
 
 Writing plugin settings through `conda config` requires conda 25.5 or newer.
-Conda 24.3 through 25.3 can read these settings but cannot write them through `conda config`.
+conda 24.3 through 25.3 can read these settings but cannot write them through `conda config`.
 For those versions, edit the active `.condarc` and add:
 
 ```yaml
@@ -37,7 +37,10 @@ plugins:
 The `osv` provider sends an artifact SHA-256 to Prefix's Parselmouth service.
 It sends returned PyPI component names and exact versions to OSV.
 
-The `basilisk` provider sends eligible conda-forge package names and versions to Prefix.
+The `basilisk` provider sends names and versions from records whose sanitized artifact URLs match the configured allowed-origin list to Prefix.
+With the default list, ordinary private-channel records have other URLs and are not eligible.
+Adding an origin authorizes recognized records below that URL path, including private records if the configured path contains them.
+Eligibility also requires syntactically valid package names, versions, and conda subdirectories, but the client does not cross-check the record's channel field, filename, or digest against conda-forge metadata.
 It does not call Parselmouth or OSV directly from your machine.
 
 Read [provider behavior](../reference/providers.md), [privacy](../explanation/privacy.md), and [matching evidence](../explanation/matching-and-evidence.md) before choosing a provider for unattended use.
