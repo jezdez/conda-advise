@@ -338,7 +338,7 @@ def local_transaction_channel(
                     "plugins:",
                     f'  conda_advise_post_solve: "{post_solve}"',
                     "  conda_advise_provider: osv",
-                    "  conda_advise_timeout_seconds: 1",
+                    "  conda_advise_timeout_seconds: 5",
                     f"  conda_advise_osv_url: {advisory_url}",
                     f"  conda_advise_parselmouth_url: {advisory_url}",
                     f"  conda_advise_basilisk_url: {provider_url}",
