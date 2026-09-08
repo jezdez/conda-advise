@@ -258,6 +258,7 @@ test = {cmd = "pytest", description = "Run tests"}
 test-cov = {cmd = "pytest --cov=conda_advise --cov-report=term-missing --cov-report=xml", description = "Run tests with coverage"}
 
 [tool.pixi.feature.release.tasks]
+check-release-runs = {cmd = "python recipe/check_release_runs.py", description = "Require successful trusted main workflow runs"}
 build = {cmd = "python -m build --no-isolation", description = "Build sdist and wheel"}
 build-conda = {cmd = "rattler-build build --recipe recipe/recipe.yaml --channel conda-forge --output-dir conda-dist", description = "Build and test the conda package"}
 check-conda-package = {cmd = "python recipe/check_package.py conda-dist", description = "Check the conda package filename and subdir"}

@@ -16,7 +16,7 @@ jobs:
     name: Build and smoke-test distributions once
     runs-on: ubuntu-latest
     permissions:
-      checks: read # Confirm the release commit passed the required workflows.
+      actions: read # Confirm the release commit passed the required workflows.
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -53,18 +53,15 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          check_pages="$(gh api --paginate --slurp \
-            "repos/${GH_REPO}/commits/${EXPECTED_SHA}/check-runs?per_page=100")"
-          for check_name in "Tests complete" "Build documentation"; do
-            conclusion="$(jq -r --arg name "$check_name" \
-              '[.[].check_runs[] | select(.name == $name)]
-               | sort_by(.completed_at)
-               | last
-               | .conclusion // "missing"' <<<"$check_pages")"
-            if [[ "$conclusion" != "success" ]]; then
-              echo "Required check '${check_name}' concluded with ${conclusion}." >&2
-              exit 1
-            fi
+          for workflow_file in tests.yml docs.yml; do
+            workflow="$(gh api "repos/${GH_REPO}/actions/workflows/${workflow_file}")"
+            workflow_id="$(jq -er '.id' <<<"$workflow")"
+            run_pages="$(gh api --paginate --slurp \
+              "repos/${GH_REPO}/actions/workflows/${workflow_id}/runs?branch=main&event=push&head_sha=${EXPECTED_SHA}&per_page=100")"
+            jq --null-input --argjson workflow "$workflow" --argjson pages "$run_pages" \
+              '{workflow: $workflow, pages: $pages}' \
+              | pixi run --locked -e release check-release-runs \
+                "$GH_REPO" "$EXPECTED_SHA" ".github/workflows/${workflow_file}"
           done
       - name: Build from the lock file
         run: pixi run --locked -e release build
@@ -133,26 +130,22 @@ jobs:
           "$smoke_python" -m pip install --no-deps "$wheel"
           "$smoke_python" -c \
             "import conda_advise; assert conda_advise.__version__ == '$RELEASE_VERSION'"
-          export XDG_CACHE_HOME="$smoke_dir/cache"
+          export CONDA_ADVISE_CACHE_PATH="$smoke_dir/cache/cache.sqlite3"
           export CONDARC="$smoke_dir/condarc"
-          "$smoke_python" "$GITHUB_WORKSPACE/demos/fixtures/setup.py" "$smoke_dir" >/dev/null
           "$smoke_python" "$GITHUB_WORKSPACE/demos/fixtures/server.py" \
             "$smoke_dir" >"$smoke_dir/server.log" 2>&1 &
           server_pid=$!
           cleanup_server() {
-            kill "$server_pid" >/dev/null 2>&1 || true
+            if [[ -n "$server_pid" ]]; then
+              kill "$server_pid" >/dev/null 2>&1 || true
+              wait "$server_pid" 2>/dev/null || true
+            fi
+            rm -rf "$smoke_dir"
           }
           trap cleanup_server EXIT
-          for attempt in $(seq 1 100); do
-            if curl --silent --fail http://127.0.0.1:8765/health >/dev/null; then
-              break
-            fi
-            if [[ "$attempt" -eq 100 ]]; then
-              echo "Fixture advisory server did not start." >&2
-              exit 1
-            fi
-            sleep 0.05
-          done
+          "$smoke_python" "$GITHUB_WORKSPACE/demos/fixtures/wait.py" \
+            "$smoke_dir" "$server_pid" >/dev/null
+          kill -0 "$server_pid"
           cd "$smoke_dir"
           "$smoke_python" -m conda advise --help
           if "$smoke_python" -m conda advise --prefix "$smoke_dir/prefix" --json > online.json; then
@@ -166,7 +159,7 @@ jobs:
           fi
           kill "$server_pid"
           wait "$server_pid" || true
-          trap - EXIT
+          server_pid=""
           if "$smoke_python" -m conda advise \
             --prefix "$smoke_dir/prefix" \
             --offline \
@@ -182,6 +175,8 @@ jobs:
           "$smoke_python" -m jsonschema \
             -i report.json \
             "$GITHUB_WORKSPACE/schema/conda-advise-report-v1.schema.json"
+          trap - EXIT
+          rm -rf "$smoke_dir"
       - name: Upload distributions
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
