@@ -5,25 +5,28 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-import sys
 import tarfile
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from conda.base.context import context
 
 from conda_advise.cache import AdvisoryCache
 from conda_advise.kev import DEFAULT_KEV_URL
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 ARTIFACT_SHA256 = "1" * 64
 ARTIFACT_MD5 = "2" * 32
 PACKAGE_FILENAME = "demo-package-1.0.0-py_0.tar.bz2"
 
 
-def main() -> None:
-    root = Path(sys.argv[1]).resolve()
+def create_fixture(root: Path, service_url: str) -> None:
+    if root.is_symlink() or any(entry.name != "server.log" for entry in root.iterdir()):
+        raise ValueError("fixture directory must be private and empty")
     prefix = root / "prefix"
     metadata = prefix / "conda-meta"
-    metadata.mkdir(parents=True, exist_ok=True)
+    metadata.mkdir(parents=True)
     (metadata / "history").write_text("", encoding="utf-8")
     record = {
         "name": "demo-package",
@@ -93,25 +96,26 @@ def main() -> None:
                 "  conda_advise_conda_forge_origins:",
                 "    - https://conda.anaconda.org/conda-forge",
                 "    - https://prefix.dev/conda-forge",
-                "    - http://127.0.0.1:8765/channel",
-                "  conda_advise_osv_url: http://127.0.0.1:8765",
-                "  conda_advise_parselmouth_url: http://127.0.0.1:8765",
-                "  conda_advise_basilisk_url: http://127.0.0.1:8765",
+                f"    - {service_url}/channel",
+                f"  conda_advise_osv_url: {service_url}",
+                f"  conda_advise_parselmouth_url: {service_url}",
+                f"  conda_advise_basilisk_url: {service_url}",
                 "",
             )
         ),
         encoding="utf-8",
     )
 
-    with AdvisoryCache() as cache:
+    cache_path = root / "cache" / "cache.sqlite3"
+    if not cache_path.resolve().is_relative_to(root.resolve()):
+        raise ValueError("fixture cache must remain inside the fixture directory")
+    with AdvisoryCache(cache_path) as cache:
         cache.put(
             f"kev:{DEFAULT_KEV_URL}",
             "catalog",
             {"count": 1, "vulnerabilities": [{"cveID": "CVE-2026-0001"}]},
             positive=True,
         )
-
-    print(prefix)
 
 
 def _package_bytes() -> bytes:
@@ -161,7 +165,3 @@ def _write_repodata(
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
     (directory / "repodata.json").write_text(encoded, encoding="utf-8")
     (directory / "current_repodata.json").write_text(encoded, encoding="utf-8")
-
-
-if __name__ == "__main__":
-    main()

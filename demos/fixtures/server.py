@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import os
+import socket
 import sys
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlsplit
+
+from setup import create_fixture
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -54,9 +58,6 @@ class FixtureHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = urlsplit(self.path).path
-        if path == "/health":
-            self._send({"status": "ok"})
-            return
         if path in {
             f"/hash-v0/{ARTIFACT_SHA256}",
             f"/hash-v0/{self.channel_sha256}",
@@ -125,14 +126,32 @@ class FixtureHandler(BaseHTTPRequestHandler):
 
 
 class FixtureServer(ThreadingHTTPServer):
-    """Allow consecutive recordings and tests to reuse the loopback port."""
+    """Reserve a loopback port for this fixture process."""
 
-    allow_reuse_address = True
+    allow_reuse_address = False
+    allow_reuse_port = False
+
+    def server_bind(self) -> None:
+        # Windows needs an exclusive bind to prevent another SO_REUSEADDR listener.
+        if exclusive := getattr(socket, "SO_EXCLUSIVEADDRUSE", None):
+            self.socket.setsockopt(socket.SOL_SOCKET, exclusive, 1)
+        super().server_bind()
 
 
 if __name__ == "__main__":
-    fixture_root = Path(sys.argv[1]).resolve()
-    fixture = json.loads((fixture_root / "fixture.json").read_text(encoding="utf-8"))
-    FixtureHandler.channel_root = (fixture_root / "channel").resolve()
-    FixtureHandler.channel_sha256 = fixture["channel_sha256"]
-    FixtureServer(("127.0.0.1", 8765), FixtureHandler).serve_forever()
+    fixture_root = Path(sys.argv[1])
+    with FixtureServer(("127.0.0.1", 0), FixtureHandler) as server:
+        service_url = f"http://127.0.0.1:{server.server_port}"
+        create_fixture(fixture_root, service_url)
+        fixture = json.loads(
+            (fixture_root / "fixture.json").read_text(encoding="utf-8")
+        )
+        FixtureHandler.channel_root = (fixture_root / "channel").resolve()
+        FixtureHandler.channel_sha256 = fixture["channel_sha256"]
+        readiness = fixture_root / "ready.json"
+        temporary = readiness.with_suffix(".tmp")
+        temporary.write_text(
+            json.dumps({"pid": os.getpid(), "url": service_url}), encoding="utf-8"
+        )
+        temporary.replace(readiness)
+        server.serve_forever()

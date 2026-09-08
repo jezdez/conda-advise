@@ -4,13 +4,13 @@ import json
 import os
 import subprocess
 import sys
-import time
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.request import urlopen
 
 import pytest
 from jsonschema import Draft202012Validator
+
+from demos.fixtures.wait import wait_for_server
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -31,15 +31,9 @@ def advisory_services(
     tmp_path: Path,
 ) -> Iterator[tuple[dict[str, str], Path, subprocess.Popen[bytes]]]:
     environment = os.environ.copy()
-    environment["XDG_CACHE_HOME"] = str(tmp_path / "cache")
+    environment["CONDA_ADVISE_CACHE_PATH"] = str(tmp_path / "cache" / "cache.sqlite3")
     environment["CONDARC"] = str(tmp_path / "condarc")
-    subprocess.run(
-        [sys.executable, str(DEMO_FIXTURES / "setup.py"), str(tmp_path)],
-        cwd=PROJECT_ROOT,
-        env=environment,
-        check=True,
-        capture_output=True,
-    )
+    environment["CONDA_PKGS_DIRS"] = str(tmp_path / "pkgs")
     server = subprocess.Popen(
         [sys.executable, str(DEMO_FIXTURES / "server.py"), str(tmp_path)],
         cwd=PROJECT_ROOT,
@@ -48,14 +42,8 @@ def advisory_services(
         stderr=subprocess.DEVNULL,
     )
     try:
-        for _attempt in range(100):
-            try:
-                with urlopen("http://127.0.0.1:8765/health", timeout=0.1):
-                    break
-            except OSError:
-                time.sleep(0.05)
-        else:
-            raise RuntimeError("fixture advisory server did not start")
+        wait_for_server(tmp_path, server.pid)
+        assert server.poll() is None
         yield environment, tmp_path / "prefix", server
     finally:
         if server.poll() is None:
@@ -178,3 +166,41 @@ def test_documented_offline_scan_uses_cached_results(
     Draft202012Validator(report_schema).validate(payload)
     assert payload["summary"]["qualifying_matches"] == 1
     assert payload["summary"]["incomplete"] == 0
+
+
+def test_demo_install_emits_post_solve_warning(
+    advisory_services: tuple[dict[str, str], Path, subprocess.Popen[bytes]],
+) -> None:
+    environment, prefix, server = advisory_services
+    service_url = wait_for_server(prefix.parent, server.pid)
+    transaction_prefix = prefix.parent / "transaction-prefix"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "conda",
+            "create",
+            "--quiet",
+            "--yes",
+            "--prefix",
+            str(transaction_prefix),
+            "--override-channels",
+            "--channel",
+            f"{service_url}/channel",
+            "--solver",
+            "libmamba",
+            "demo-package",
+        ],
+        cwd=PROJECT_ROOT,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "conda-advise:" in completed.stderr
+    assert "1 package has advisory matches" in completed.stderr
+    assert "incomplete" not in completed.stderr
+    assert (transaction_prefix / "share" / "conda-advise-demo.txt").read_text(
+        encoding="utf-8"
+    ) == "deterministic conda-advise demonstration\n"

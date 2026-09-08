@@ -1,8 +1,7 @@
 # Releasing
 
-Releases are built from bare version tags by the `Release` GitHub Actions workflow.
-The workflow builds the wheel and source distribution once, checks their metadata and contents, installs the wheel into a clean conda-owning environment, records GitHub build provenance, and attaches those files to a draft GitHub release.
-It publishes the same files to PyPI through Trusted Publishing, builds a noarch conda package from the exact published source distribution, uploads that package to the `jezdez` Anaconda.org channel, and makes the GitHub release public only after a clean channel installation succeeds.
+The `Release` workflow builds an annotated bare version tag once and attaches the verified wheel and source distribution to a draft GitHub release.
+It publishes those same files to PyPI, builds the Anaconda.org package from that source distribution, and publishes the GitHub release after a clean channel installation succeeds.
 
 ## Repository configuration
 
@@ -18,7 +17,7 @@ Configure the GitHub Actions `anaconda` environment with an `ANACONDA_API_KEY` s
 Permit `anaconda` deployments only from version tags and require maintainer approval.
 The workflow exposes that secret as `ANACONDA_API_TOKEN` only to the Anaconda Client upload step because that is the environment variable read by Anaconda Client.
 Enable immutable GitHub releases before publishing the first version.
-Required reviewers, tag deployment policies, and immutable releases are repository settings rather than workflow controls.
+Required reviewers, tag deployment policies, and immutable releases are repository settings.
 Verify those settings immediately before creating each release tag.
 
 ## Prepare a release
@@ -113,25 +112,26 @@ Install the published wheel into a clean conda environment and verify plugin dis
 set -euo pipefail
 release_root="$(mktemp -d)"
 release_prefix="$release_root/environment"
-consumer_root="$release_root/fixture"
+consumer_root="$(mktemp -d "$release_root/fixture.XXXXXX")"
 conda create --yes --prefix "$release_prefix" --override-channels \
   --channel conda-forge "conda>=24.3" cvss jsonschema packageurl-python pip rich
 conda run --prefix "$release_prefix" python -m pip install --no-cache-dir \
   "$release_check/pypi/conda_advise-${release_version}-py3-none-any.whl"
 conda run --prefix "$release_prefix" conda advise --help
-export XDG_CACHE_HOME="$consumer_root/cache"
+export CONDA_ADVISE_CACHE_PATH="$consumer_root/cache/cache.sqlite3"
+export CONDA_PKGS_DIRS="$consumer_root/pkgs"
 export CONDARC="$consumer_root/condarc"
-"$release_prefix/bin/python" demos/fixtures/setup.py "$consumer_root" >/dev/null
 "$release_prefix/bin/python" demos/fixtures/server.py "$consumer_root" \
   >"$consumer_root/server.log" 2>&1 &
 consumer_server_pid=$!
 cleanup_consumer_server() {
   kill "$consumer_server_pid" >/dev/null 2>&1 || true
+  wait "$consumer_server_pid" >/dev/null 2>&1 || true
 }
 trap cleanup_consumer_server EXIT
-until curl --silent --fail http://127.0.0.1:8765/health >/dev/null; do
-  sleep 0.05
-done
+"$release_prefix/bin/python" demos/fixtures/wait.py \
+  "$consumer_root" "$consumer_server_pid" >/dev/null
+kill -0 "$consumer_server_pid"
 if conda run --prefix "$release_prefix" conda advise \
   --prefix "$consumer_root/prefix" --json >"$release_check/online.json"; then
   online_status=0

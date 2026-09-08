@@ -1,7 +1,7 @@
 # Demo recordings
 
-The terminal demonstrations use [VHS](https://github.com/charmbracelet/vhs) and deterministic local responses.
-They do not contact Parselmouth, OSV, Basilisk, CISA, or conda-forge.
+The recordings use [VHS](https://github.com/charmbracelet/vhs) with local fixtures for [Parselmouth](https://github.com/prefix-dev/parselmouth), [OSV](https://osv.dev/), [Basilisk](https://basilisk.prefix.dev/status), and CISA KEV.
+No live advisory or package service is needed.
 
 | Demo | Description |
 | --- | --- |
@@ -9,27 +9,27 @@ They do not contact Parselmouth, OSV, Basilisk, CISA, or conda-forge.
 | `post-solve-warning` | Create an environment through conda and show the post-solve warning |
 | `providers` | Compare the `osv` and experimental `basilisk` providers in separate runs |
 
-Each tape writes a GIF for documentation and an MP4 for higher-quality playback.
-The shared settings use a tall terminal, deliberate typing, and long result pauses so the complete report remains readable.
+Each tape writes a GIF and an MP4, with pauses to read the report.
 
 ## Regenerate
 
-Install the locked demo environment, then render all recordings:
+Render all recordings:
 
 ```console
-pixi run --locked demos
+pixi run --locked -e demo demos
 ```
 
 Pass one or more names to render selected tapes:
 
 ```console
-pixi run --locked demos quickstart
-pixi run --locked demos quickstart providers
+pixi run --locked -e demo demos quickstart
+pixi run --locked -e demo demos quickstart providers
 ```
 
-`_settings.tape` owns the shared terminal dimensions, color theme, font, typing speed, and timeout.
-`fixtures/server.py` serves fixed Parselmouth, OSV, Basilisk, and conda-channel responses on loopback.
-`fixtures/setup.py` creates an installed-prefix record, a deterministic local conda package and channel, conda configuration, and fresh KEV cache under a temporary demo directory.
+`_settings.tape` sets the terminal appearance and timing.
+Each tape creates a private temporary directory and starts `fixtures/server.py`, which reserves an available loopback port before creating the prefix, channel, configuration, and KEV cache.
+`fixtures/wait.py` checks the server's startup file and process ID.
+The directory and port vary between recordings, while advisory and package data stay fixed.
 
-The post-solve recording runs a real `conda create` solve and transaction against the temporary channel.
-It does not add a production fixture mode or special command-line option.
+`CONDA_ADVISE_CACHE_PATH` and `CONDA_PKGS_DIRS` keep caches inside that directory, which is removed when recording ends.
+The post-solve recording runs a real `conda create` transaction against the local channel.

@@ -242,6 +242,7 @@ win-arm64-native = {features = ["win-arm64-native"], no-default-feature = true}
 docs = {cmd = "sphinx-build -W --keep-going -n -b dirhtml docs docs/_build/dirhtml", description = "Build documentation"}
 docs-linkcheck = {cmd = "sphinx-build -W --keep-going -b linkcheck docs docs/_build/linkcheck", description = "Check documentation links"}
 examples-check = {cmd = "pytest -m 'not live' tests/examples", description = "Run documented examples"}
+offline-smoke = {cmd = "python recipe/offline_smoke.py", description = "Check the installed plugin with an isolated offline cache"}
 demos = {cmd = "bash demos/render.sh", description = "Render VHS demos"}
 format = {cmd = "ruff format conda_advise demos recipe tests", description = "Auto-format code"}
 format-check = {cmd = "ruff format --check conda_advise demos recipe tests", description = "Verify formatting"}
