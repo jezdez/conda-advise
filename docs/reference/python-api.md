@@ -1,6 +1,6 @@
 # Python result API
 
-`conda_advise.AdvisoryReport` and the result types below provide the deliberately public Python representation of a completed scan.
+`conda_advise.AdvisoryReport` and the result types below represent a completed scan.
 Use `AdvisoryReport.to_dict()` when an application needs the versioned JSON representation.
 
 Provider clients, component discovery, network scheduling, matching, and cache internals are not public extension points in v1.
@@ -64,5 +64,5 @@ Provider clients, component discovery, network scheduling, matching, and cache i
    :members:
 ```
 
-The JSON schema, rather than Python constructor compatibility, is the supported cross-process interface.
+Use the [JSON schema](json-output.md) to exchange reports between processes.
 Public model changes during the alpha period will be documented in the changelog.

@@ -112,22 +112,37 @@ def test_numeric_zero_score_takes_precedence_over_provider_label() -> None:
     assert not findings[0].qualifies(Severity.LOW)
 
 
-def test_cvss_v2_has_no_critical_severity() -> None:
+@pytest.mark.parametrize(
+    ("vectors", "expected"),
+    [
+        ([{"type": "CVSS_V2", "score": "10.0"}], Severity.HIGH),
+        (
+            [{"type": "CVSS_V2", "score": "10.0"}, {"type": "CVSS_V3", "score": "9.8"}],
+            Severity.CRITICAL,
+        ),
+        (
+            [{"type": "CVSS_V4", "score": "9.1"}, {"type": "CVSS_V2", "score": "10.0"}],
+            Severity.CRITICAL,
+        ),
+    ],
+    ids=["v2-only", "v2-and-v3", "v4-and-v2"],
+)
+def test_cvss_severity_uses_each_vectors_version(vectors, expected) -> None:
     findings = build_findings(
         [
             make_match(
                 {
                     "id": "CVE-2026-1",
                     "modified": "2026-01-01T00:00:00Z",
-                    "severity": [{"type": "CVSS_V2", "score": "10.0"}],
+                    "severity": vectors,
                 }
             )
         ]
     )
 
     assert findings[0].score == 10
-    assert findings[0].severity is Severity.HIGH
-    assert not findings[0].qualifies(Severity.CRITICAL)
+    assert findings[0].severity is expected
+    assert findings[0].qualifies(Severity.CRITICAL) is (expected is Severity.CRITICAL)
 
 
 def test_non_cvss_numeric_score_is_preserved_without_a_base_score() -> None:

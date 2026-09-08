@@ -1,44 +1,36 @@
 # Use conda-advise in CI
 
-Run `conda advise --json` once, retain its exit status, publish the complete JSON report, show a short summary, and apply the CI policy last.
-This keeps machine-readable evidence available when a qualifying finding or incomplete lookup makes the scanner return a nonzero status.
-It also keeps terminal styling out of automation.
+Save the JSON report and exit status before applying your CI policy.
+This preserves the report for review when findings or incomplete lookups produce a nonzero status.
 
 ## Choose the policy
 
-Pass an explicit provider and threshold in unattended jobs so that local conda configuration cannot change the provider selection or qualifying severity unexpectedly:
+Pass an explicit provider and severity threshold so local configuration cannot change them:
 
 ```console
 conda advise --prefix /path/to/environment --provider=osv --minimum-severity high --json
 ```
 
-The exit statuses are:
-
 | Status | Meaning |
 | --- | --- |
-| `0` | No attempted lookup was incomplete and no finding met the threshold. Some subjects may remain `not_checked` |
-| `1` | At least one finding met the threshold and no attempted lookup was incomplete |
-| `2` | Target selection, usage, scanning, or JSON rendering failed, or provider or CISA KEV work was incomplete. This status takes precedence over qualifying findings |
+| `0` | No incomplete lookup or qualifying finding. Some subjects may remain `not_checked` |
+| `1` | At least one qualifying finding and no incomplete lookup |
+| `2` | Command failure or incomplete provider or CISA KEV work. Takes precedence over findings |
 
-Choose one of these policies:
+Two possible policies are:
 
 | Policy | Status `0` | Status `1` | Status `2` |
 | --- | --- | --- | --- |
 | Awareness | Pass | Warn and pass | Fail |
 | Gate | Pass | Fail | Fail |
 
-The awareness policy fits an initial rollout because existing advisory matches do not immediately block development.
-The gate policy is appropriate only after maintainers have reviewed existing results and decided that the configured threshold should block the job.
-In both policies, status `2` fails because command or scan failures and incomplete provider or KEV work must not look like a clean result.
-
-An unmapped artifact is `not_checked` and does not by itself produce status `2`.
-Your policy must still decide whether the `unmapped` and `not_checked` counts are acceptable.
-Neither count means that those artifacts are safe or unaffected.
+Awareness mode lets maintainers review existing matches before making them block a job.
+Both examples fail on status `2`.
+Unmapped artifacts are `not_checked` and do not themselves cause status `2`, so decide separately which coverage gaps are acceptable.
 
 ## Capture the report and status
 
-Do not use `|| true` without first retaining the original exit status.
-The report is useful for review even when the command returns `1` or `2`.
+Retain the original exit status when redirecting JSON output:
 
 ::::{tab-set}
 
@@ -75,74 +67,12 @@ $adviseStatus | Set-Content -LiteralPath conda-advise.status -Encoding ascii
 
 The PowerShell example requires PowerShell 7 so that `-Encoding utf8` writes JSON without a byte-order mark.
 Upload `conda-advise.json` before a final step reads `conda-advise.status` and applies the selected policy.
-Keep stderr in the job log because concise provider and command diagnostics are written there rather than mixed into the JSON document.
-
-## Validate the JSON structure
-
-Always reject an unknown `schema_version` before consuming fields.
-For structural JSON Schema validation, install the optional `jsonschema` package in the CI environment and load the schema shipped inside `conda_advise`.
-
-::::{tab-set}
-
-:::{tab-item} POSIX
-
-```sh
-python - <<'PY'
-from importlib.resources import files
-import json
-from pathlib import Path
-
-from jsonschema import Draft202012Validator
-
-report = json.loads(Path("conda-advise.json").read_text(encoding="utf-8-sig"))
-schema = json.loads(
-    files("conda_advise")
-    .joinpath("schema")
-    .joinpath("conda-advise-report-v1.schema.json")
-    .read_text(encoding="utf-8")
-)
-Draft202012Validator(schema).validate(report)
-if report["schema_version"] != 1:
-    raise SystemExit("unsupported conda-advise schema version")
-PY
-```
-
-:::
-
-:::{tab-item} PowerShell 7
-
-```powershell
-@'
-from importlib.resources import files
-import json
-from pathlib import Path
-
-from jsonschema import Draft202012Validator
-
-report = json.loads(Path("conda-advise.json").read_text(encoding="utf-8-sig"))
-schema = json.loads(
-    files("conda_advise")
-    .joinpath("schema")
-    .joinpath("conda-advise-report-v1.schema.json")
-    .read_text(encoding="utf-8")
-)
-Draft202012Validator(schema).validate(report)
-if report["schema_version"] != 1:
-    raise SystemExit("unsupported conda-advise schema version")
-'@ | python -
-```
-
-:::
-
-::::
-
-This validation confirms the document structure but does not enforce optional JSON Schema formats such as `date-time`.
-It does not change the coverage meaning or turn a zero-match result into a safety claim.
+Keep stderr in the job log for provider and command diagnostics.
 
 ## Publish a GitHub Actions report
 
-The following job fragment belongs after steps that install pinned `conda-advise` and `jsonschema` releases into the environment that owns conda and create the target prefix under the runner's temporary directory.
-It defaults to the awareness policy.
+Run this fragment from the [source checkout](install.md) after `pixi install --locked -e dev` and creation of the target prefix.
+The development environment includes `jsonschema`.
 Set `ADVISE_POLICY` to `gate` when qualifying findings should fail the job.
 
 ```yaml
@@ -155,7 +85,7 @@ jobs:
     env:
       ADVISE_POLICY: awareness
     steps:
-      # Install conda-advise and jsonschema, then create the target prefix before scanning.
+      # Check out conda-advise, install its Pixi environment, and create the target prefix.
 
       - name: Scan the environment
         id: scan
@@ -165,42 +95,56 @@ jobs:
           ADVISE_REPORT: ${{ runner.temp }}/conda-advise-report.json
         run: |
           advise_status=0
-          conda advise \
+          pixi run --locked -e dev conda advise \
             --prefix "$ADVISE_PREFIX" \
             --provider=osv \
             --minimum-severity high \
             --json > "$ADVISE_REPORT" || advise_status=$?
           printf 'status=%s\n' "$advise_status" >> "$GITHUB_OUTPUT"
 
-      - name: Validate the JSON structure
+      - name: Validate and summarize the report
         id: validate
         if: ${{ !cancelled() }}
         shell: bash
         env:
           ADVISE_REPORT: ${{ runner.temp }}/conda-advise-report.json
         run: |
-          python - <<'PY'
-          from importlib.resources import files
+          pixi run --locked -e dev python - <<'PYTHON'
           import json
           import os
           from pathlib import Path
 
-          from jsonschema import Draft202012Validator
+          from jsonschema import Draft202012Validator, ValidationError
 
-          report = json.loads(Path(os.environ["ADVISE_REPORT"]).read_text(encoding="utf-8"))
-          if report.get("schema_version") != 1:
-              raise SystemExit("unsupported conda-advise schema version")
+          try:
+              report = json.loads(Path(os.environ["ADVISE_REPORT"]).read_text(encoding="utf-8"))
+          except (OSError, UnicodeError, json.JSONDecodeError):
+              raise SystemExit("The advisory report could not be read")
+          if not isinstance(report, dict) or report.get("schema_version") != 1:
+              raise SystemExit("Unsupported conda-advise schema version")
           schema = json.loads(
-              files("conda_advise")
-              .joinpath("schema")
-              .joinpath("conda-advise-report-v1.schema.json")
+              Path("schema/conda-advise-report-v1.schema.json")
               .read_text(encoding="utf-8")
           )
-          Draft202012Validator(schema).validate(report)
-          PY
+          try:
+              Draft202012Validator(schema).validate(report)
+          except ValidationError:
+              raise SystemExit("The advisory report did not pass schema validation")
+          if "summary" not in report:
+              raise SystemExit("The scanner returned an error document")
+
+          lines = ["## conda-advise", "", "| Field | Count |", "| --- | ---: |"]
+          for field in (
+              "checked", "mapped", "unmapped", "not_checked", "incomplete",
+              "total_matches", "qualifying_matches",
+          ):
+              lines.append(f"| {field.replace('_', ' ')} | {report['summary'][field]} |")
+          lines.extend(["", "Missing coverage is not evidence that an artifact is unaffected.", ""])
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as stream:
+              stream.write("\n".join(lines))
+          PYTHON
 
       - name: Upload the JSON report
-        id: upload
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -208,87 +152,6 @@ jobs:
           path: ${{ runner.temp }}/conda-advise-report.json
           if-no-files-found: error
           retention-days: 14
-
-      - name: Add the job summary
-        if: ${{ !cancelled() && steps.validate.outcome == 'success' }}
-        shell: bash
-        env:
-          ADVISE_ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
-          ADVISE_REPORT: ${{ runner.temp }}/conda-advise-report.json
-          ADVISE_STATUS: ${{ steps.scan.outputs.status }}
-        run: |
-          python - <<'PY'
-          from __future__ import annotations
-
-          import json
-          import os
-          from pathlib import Path
-
-
-          def cell(value: object) -> str:
-              return (
-                  str(value)
-                  .replace("\\", "\\\\")
-                  .replace("|", "\\|")
-                  .replace("\r", " ")
-                  .replace("\n", " ")
-              )
-
-
-          report_path = Path(os.environ["ADVISE_REPORT"])
-          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
-          lines = ["## conda-advise", ""]
-          try:
-              report = json.loads(report_path.read_text(encoding="utf-8"))
-          except (OSError, UnicodeError, json.JSONDecodeError):
-              lines.append("The JSON report could not be read. Review the uploaded artifact and scanner log.")
-          else:
-              lines.extend(
-                  [
-                      "| Field | Value |",
-                      "| --- | ---: |",
-                      f"| Command status | {cell(os.environ['ADVISE_STATUS'])} |",
-                  ]
-              )
-              if report.get("schema_version") != 1:
-                  lines.append(f"| Schema version | Unsupported: {cell(report.get('schema_version'))} |")
-              elif "summary" in report:
-                  counts = report["summary"]
-                  failures = report["failures"]
-                  affecting_completeness = sum(
-                      failure["affects_completeness"] is True for failure in failures
-                  )
-                  lines.extend(
-                      [
-                          f"| Provider | {cell(report['provider'])} |",
-                          f"| Experimental provider | {cell(str(report['provider_experimental']).lower())} |",
-                          f"| Minimum severity | {cell(report['minimum_severity'])} |",
-                          f"| Checked | {cell(counts['checked'])} |",
-                          f"| Mapped | {cell(counts['mapped'])} |",
-                          f"| Unmapped | {cell(counts['unmapped'])} |",
-                          f"| Not checked | {cell(counts['not_checked'])} |",
-                          f"| Incomplete | {cell(counts['incomplete'])} |",
-                          f"| Failures | {cell(len(failures))} |",
-                          f"| Completeness-affecting failures | {cell(affecting_completeness)} |",
-                          f"| Total matches | {cell(counts['total_matches'])} |",
-                          f"| Qualifying matches | {cell(counts['qualifying_matches'])} |",
-                      ]
-                  )
-              else:
-                  lines.append("| Result | The command returned an error document. Review the scanner log. |")
-          artifact_url = os.environ.get("ADVISE_ARTIFACT_URL")
-          if artifact_url:
-              lines.extend(["", f"[Download the complete JSON report]({artifact_url})"])
-          lines.extend(
-              [
-                  "",
-                  "Missing, unmapped, or incomplete coverage is not evidence that an artifact is unaffected.",
-                  "",
-              ]
-          )
-          with summary_path.open("a", encoding="utf-8") as stream:
-              stream.write("\n".join(lines))
-          PY
 
       - name: Apply the advisory policy
         if: ${{ !cancelled() }}
@@ -298,58 +161,48 @@ jobs:
           ADVISE_VALIDATION: ${{ steps.validate.outcome }}
         run: |
           if [ "$ADVISE_VALIDATION" != "success" ]; then
-            echo "::error::The conda advisory report did not pass schema validation"
+            echo "::error::The advisory report could not be validated"
             exit 2
           fi
-          if [ "$ADVISE_POLICY" != "awareness" ] && [ "$ADVISE_POLICY" != "gate" ]; then
-            echo "::error::Unknown conda-advise policy: $ADVISE_POLICY"
-            exit 64
-          fi
-          if [ "$ADVISE_STATUS" = "0" ]; then
-            exit 0
-          fi
-          if [ "$ADVISE_STATUS" = "1" ] && [ "$ADVISE_POLICY" = "awareness" ]; then
-            echo "::warning::Review qualifying conda advisory matches in the job summary"
-            exit 0
-          fi
-          if [ "$ADVISE_STATUS" = "1" ]; then
-            echo "::error::Qualifying conda advisory matches failed the configured gate"
-            exit 1
-          fi
-          if [ "$ADVISE_STATUS" = "2" ]; then
-            echo "::error::The conda advisory scan was incomplete or its target was invalid"
-            exit 2
-          fi
-          echo "::error::Unexpected conda-advise status: $ADVISE_STATUS"
-          exit "$ADVISE_STATUS"
+          case "$ADVISE_POLICY:$ADVISE_STATUS" in
+            awareness:0|gate:0) exit 0 ;;
+            awareness:1)
+              echo "::warning::Review qualifying advisory matches in the report"
+              exit 0 ;;
+            gate:1)
+              echo "::error::Qualifying advisory matches failed the configured gate"
+              exit 1 ;;
+            awareness:2|gate:2)
+              echo "::error::The advisory scan failed or was incomplete"
+              exit 2 ;;
+            *)
+              echo "::error::Unexpected advisory policy or scanner status"
+              exit 2 ;;
+          esac
 ```
 
-The scan step records the status and finishes successfully so later steps can publish the report.
-The upload step uses GitHub's recommended [`!cancelled()` status check](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#status-check-functions), which still runs after a previous failure but does not continue work after cancellation.
-The summary requires successful schema validation before it reads report fields.
-The final step is the only place that converts the recorded scanner result into the selected CI policy.
+The scan step captures its status so later steps can publish the report.
+The validation step checks the [versioned JSON schema](../reference/json-output.md) before writing counts to [`GITHUB_STEP_SUMMARY`](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands#adding-a-job-summary).
+It does not enforce optional JSON Schema formats such as `date-time`.
+The [`!cancelled()` condition](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#status-check-functions) lets the report upload run after a failure.
+The final step applies the chosen policy.
 
-When the artifact audience is acceptable, put the complete JSON document in an artifact rather than the job log.
-GitHub's [`upload-artifact` action](https://github.com/actions/upload-artifact) provides retention controls, a digest, and the `artifact-url` used by the summary.
-The concise table uses [`GITHUB_STEP_SUMMARY`](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands#adding-a-job-summary) so reviewers can see the provider, coverage, and match counts without expanding logs.
+Review the artifact audience before uploading a full report.
+It includes the credential-free package inventory, including private or unrecognized records that remain `not_checked`.
+For sensitive inventories, keep only a non-sensitive summary in GitHub and store the report with appropriate access controls.
 
-Review who can download workflow artifacts before uploading the full report.
-It contains the exact credential-free package inventory, including names, versions, builds, filenames, hashes, and sanitized origins for private or unrecognized records that remain `not_checked`.
-If that inventory is sensitive, omit the upload or send the report to storage with the required access controls while retaining a non-sensitive job summary.
-
-Advisory summaries, aliases, fix versions, URLs, error messages, and values under `source_records[].data` are provider-controlled input.
-Do not interpolate the full report or those strings into workflow commands, logs, HTML, Markdown, or shell code without escaping them for that output context.
-After schema validation, the example summary renders only local enumerations, booleans, counts, and the captured command status.
+Advisory summaries, aliases, fixes, URLs, errors, and `source_records[].data` are provider-controlled input.
+Escape them for the destination before using them in logs, Markdown, HTML, or shell code.
+The example summary uses only fixed labels and validated counts.
 
 ## Scan pull requests and on a schedule
 
-A pull request scan is a full snapshot of the environment that the job created.
-It does not compare the pull request with the target branch and cannot claim that a finding is newly introduced.
-The [OSV-Scanner pull request workflow](https://google.github.io/osv-scanner/github-action/) performs a dedicated old-versus-new comparison, but `conda-advise` v1 has no baseline comparison feature.
+Each scan reports the environment as it exists at that moment.
+It does not identify findings introduced by a pull request.
+[OSV-Scanner's pull request workflow](https://google.github.io/osv-scanner/github-action/) provides that comparison for its supported inputs.
 
-Run a full scan on the default branch on a schedule as well as after dependency changes.
-New advisory or KEV data can qualify an unchanged environment after its last pull request ran.
-A typical workflow trigger is:
+Schedule scans as well as running them after dependency changes.
+New advisories or KEV entries can affect an unchanged environment:
 
 ```yaml
 on:
@@ -360,30 +213,21 @@ on:
     - cron: "23 4 * * 1"
 ```
 
-Use awareness mode while establishing a reviewed baseline.
-Use a gate on release or deployment only when failing on every current qualifying result is the intended policy.
-The [Grype CLI](https://oss.anchore.com/docs/reference/grype/cli/) similarly separates its report `--output` from its `--fail-on` threshold.
-Both the [Anchore scan action](https://github.com/anchore/scan-action) and [OSV-Scanner action](https://google.github.io/osv-scanner/github-action/) separate report generation from the decision to fail a workflow.
+The [Grype CLI](https://oss.anchore.com/docs/reference/grype/cli/) and [Anchore scan action](https://github.com/anchore/scan-action) also provide report output and configurable failure thresholds.
+See [related tools](../explanation/ecosystem-comparison.md) for their supported inputs.
 
 ## Keep fork scans unprivileged
 
-Run fork pull requests with the normal `pull_request` event, a read-only token, and no secrets.
-The JSON artifact and job summary do not need `security-events: write`.
+Use the normal `pull_request` event, a read-only token, and no secrets for fork scans.
+JSON artifacts and job summaries do not need `security-events: write`.
+See GitHub's [fork permission guidance](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#changing-the-permissions-in-a-forked-repository).
 
-GitHub normally reduces requested write permissions to read-only for fork pull requests, as described in its [`GITHUB_TOKEN` permission guidance](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#changing-the-permissions-in-a-forked-repository).
-Do not switch a scanner that checks out or executes pull request content to `pull_request_target` to obtain write access.
-GitHub warns that executing untrusted code with [`pull_request_target`](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request_target) can expose write privileges or secrets.
+Do not run untrusted pull request code under [`pull_request_target`](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request_target), which can expose write privileges and secrets.
 
-## Why v1 does not emit SARIF
+## JSON and SARIF
 
-[Grype](https://oss.anchore.com/docs/reference/grype/cli/) and OSV-Scanner can produce SARIF for GitHub code scanning, and their official actions make that format convenient for repository and dependency scans.
-`conda-advise` v1 deliberately keeps its versioned JSON report instead.
-
-GitHub requires at least one physical location for every SARIF result it displays and recommends a stable repository-relative file path for accurate annotations and fingerprints.
-An installed conda `PackageRecord` identifies an artifact in a prefix, not a line in a checked-in environment file.
-Assigning every finding to `environment.yml` would be inaccurate for transitive packages and would imply source locations that `conda-advise` did not discover.
-See GitHub's [SARIF support requirements](https://docs.github.com/en/code-security/reference/code-scanning/sarif-files/sarif-support) for the location and fingerprint behavior.
-
-SARIF can be added after `conda-advise` can map a scanned package to an exact checked-in manifest or lock-file location and can preserve stable alert identities across runs.
-Until then, upload `conda-advise-report-v1` as an artifact and use the job summary for review.
-Do not convert missing coverage, an unmapped artifact, an incomplete lookup, or an empty match set into a safety claim.
+V1 provides JSON output, with no SARIF export.
+GitHub's [SARIF support](https://docs.github.com/en/code-security/reference/code-scanning/sarif-files/sarif-support) requires physical source locations for displayed findings.
+An installed conda package record does not identify a line in a checked-in manifest or lockfile.
+Assigning every match to `environment.yml` would misidentify transitive packages and other records without a known source location.
+Use the JSON artifact and job summary for review.

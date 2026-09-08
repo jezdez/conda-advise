@@ -338,7 +338,8 @@ def local_transaction_channel(
                     "plugins:",
                     f'  conda_advise_post_solve: "{post_solve}"',
                     "  conda_advise_provider: osv",
-                    "  conda_advise_timeout_seconds: 5",
+                    # These checks exercise reports, including on emulated runners.
+                    "  conda_advise_timeout_seconds: 30",
                     f"  conda_advise_osv_url: {advisory_url}",
                     f"  conda_advise_parselmouth_url: {advisory_url}",
                     f"  conda_advise_basilisk_url: {provider_url}",
@@ -714,11 +715,16 @@ def test_conda_offline_transaction_uses_cached_artifact_without_provider_request
     assert not LocalChannelHandler.requests
 
 
+@pytest.mark.parametrize(
+    "message",
+    ["provider failed", "https://user:synthetic-secret@[invalid]"],
+    ids=["ordinary", "credential-bearing"],
+)
 def test_post_solve_provider_failure_does_not_abort_transaction(
-    monkeypatch, caplog
+    monkeypatch, caplog, message
 ) -> None:
     def fail_scan(*args, **kwargs):
-        raise RuntimeError("provider failed")
+        raise RuntimeError(message)
 
     monkeypatch.setattr(context, "plugins", make_settings())
     monkeypatch.setattr(context, "offline", False)
@@ -726,7 +732,8 @@ def test_post_solve_provider_failure_does_not_abort_transaction(
 
     _post_solve("repodata.json", (), (object(),))
 
-    assert "could not complete the advisory check: provider failed" in caplog.text
+    assert "could not complete the advisory check" in caplog.text
+    assert message not in caplog.text
 
 
 def test_post_solve_checks_only_link_records(

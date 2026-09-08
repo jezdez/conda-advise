@@ -9,6 +9,11 @@ import sys
 import tempfile
 from pathlib import Path
 
+from conda_advise.cache import AdvisoryCache
+from conda_advise.components.parselmouth import DEFAULT_PARSELMOUTH_URL
+from conda_advise.kev import DEFAULT_KEV_URL
+from conda_advise.providers.osv import DEFAULT_OSV_URL
+
 ARTIFACT_SHA256 = "1" * 64
 ADVISORY_ID = "GHSA-demo-0001-0001"
 MODIFIED = "2026-08-01T12:00:00Z"
@@ -16,9 +21,17 @@ COMPONENT_PURL = "pkg:pypi/demo-package@1.0.0"
 
 
 def main() -> None:
-    root = Path(tempfile.mkdtemp(prefix="conda-advise-package-test-"))
-    os.environ["XDG_CACHE_HOME"] = str(root / "cache")
-    os.environ["CONDARC"] = str(root / "condarc")
+    with tempfile.TemporaryDirectory(prefix="conda-advise-package-test-") as directory:
+        check_offline(Path(directory))
+
+
+def check_offline(root: Path) -> None:
+    cache_path = root / "cache" / "cache.sqlite3"
+    if not cache_path.resolve().is_relative_to(root.resolve()):
+        raise ValueError("smoke-test cache must remain inside the temporary directory")
+    environment = os.environ.copy()
+    environment["CONDA_ADVISE_CACHE_PATH"] = str(cache_path)
+    environment["CONDARC"] = str(root / "condarc")
     (root / "condarc").write_text("channels:\n  - conda-forge\n", encoding="utf-8")
     prefix = root / "prefix"
     metadata = prefix / "conda-meta"
@@ -42,11 +55,6 @@ def main() -> None:
     (metadata / "demo-package-1.0.0-py_0.json").write_text(
         json.dumps(record), encoding="utf-8"
     )
-
-    from conda_advise.cache import AdvisoryCache
-    from conda_advise.components.parselmouth import DEFAULT_PARSELMOUTH_URL
-    from conda_advise.kev import DEFAULT_KEV_URL
-    from conda_advise.providers.osv import DEFAULT_OSV_URL
 
     advisory = {
         "schema_version": "1.7.0",
@@ -79,7 +87,7 @@ def main() -> None:
             }
         ],
     }
-    with AdvisoryCache() as cache:
+    with AdvisoryCache(cache_path) as cache:
         cache.put(
             f"parselmouth:{DEFAULT_PARSELMOUTH_URL}",
             ARTIFACT_SHA256,
@@ -116,12 +124,14 @@ def main() -> None:
             "advise",
             "--prefix",
             str(prefix),
+            "--provider",
+            "osv",
             "--offline",
             "--json",
         ],
         check=False,
         capture_output=True,
-        env=os.environ.copy(),
+        env=environment,
         text=True,
     )
     if completed.returncode != 1:

@@ -1,16 +1,15 @@
 # Check an environment for advisories
 
-Security advisories name upstream projects, but a conda environment contains exact package builds that may include patches and vendored components.
-This tutorial runs `conda-advise` from its locked source checkout, scans the development environment, and shows how to distinguish a finding from coverage that remains unknown.
+This tutorial runs `conda-advise` from source, scans an environment, and explains its findings and coverage.
 
 ## Prerequisites
 
 - Git
 - [Pixi](https://pixi.prefix.dev/)
-- Network access to Prefix's Parselmouth service and OSV, plus CISA when CVE findings need KEV enrichment
+- Network access to [Parselmouth](https://github.com/prefix-dev/parselmouth) and [OSV](https://osv.dev/), plus [CISA](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) for known-exploited CVE data
 
 `conda-advise` has no published release yet.
-The source workflow keeps the preview inside the repository's Pixi environment.
+These commands use the repository's locked Pixi environment.
 
 ## Start the development environment
 
@@ -49,8 +48,9 @@ pixi run --locked -e dev conda advise
 ```
 
 With no `--name` or `--prefix`, conda selects its active or default prefix.
-The command reads installed conda package records and schedules provider requests only for recognized records whose sanitized artifact URLs match the configured allowed-origin list.
-The default list contains the canonical conda-forge origin and Prefix mirror.
+The command reads installed conda package records.
+By default, it queries providers only for records with artifact URLs beneath the canonical conda-forge channel or Prefix mirror.
+See [privacy](../explanation/privacy.md) for the eligibility rules and request details.
 
 The default lookup follows this path:
 
@@ -58,14 +58,13 @@ The default lookup follows this path:
 artifact SHA-256 → Prefix Parselmouth → PyPI component name and version → OSV
 ```
 
-The SHA-256 identifies the exact conda archive.
-Parselmouth returns Python distributions associated with that archive, and OSV evaluates each returned name and exact version.
-The resulting `artifact_component` evidence connects the advisory match to a component of the archive without claiming that vulnerable code is reachable or unpatched.
+Parselmouth uses the archive's SHA-256 to look up its Python components.
+OSV matches each component name and version against its advisory data.
 
 ## Read the report
 
-The deterministic demonstration uses fixed advisory data and produces the following report when redirected or shown without color.
-Only the temporary target directory changes between runs.
+The demo uses fixed advisory data and produces this report.
+Its temporary directory and local server port vary between runs.
 
 ```text
 Conda advisory report
@@ -81,7 +80,7 @@ demo-package 1.0.0 py_0 (conda-forge/noarch)
     ├── Upstream fixes: 1.0.1
     ├── Evidence: artifact component pkg:pypi/demo-package@1.0.0
     └── Sources: osv:GHSA-demo-0001-0001
-        http://127.0.0.1:8765/v1/vulns/GHSA-demo-0001-0001
+        http://127.0.0.1:<port>/v1/vulns/GHSA-demo-0001-0001
 
 Scan summary
 Checked 1 of 1 artifacts.
@@ -89,42 +88,27 @@ Mapped 1, unmapped 0, not checked 0, incomplete 0.
 Found 1 match, 1 at or above high or listed in CISA KEV.
 ```
 
-The package heading records the conda name, version, build, channel, and platform directory.
-The advisory line gives its preferred identifier, normalized severity, highest numeric Common Vulnerability Scoring System (CVSS) score, and KEV status.
-`CISA KEV` means the CVE appears in CISA's catalog of vulnerabilities known to have been exploited in the wild.
-The evidence line names the PyPI component associated with the exact archive.
-The upstream fix is information from the advisory source, not a promise that the named version is available as a conda-forge package.
+The package heading identifies the conda build.
+The advisory line shows its identifier, severity, highest CVSS score, and known-exploited status.
+The evidence line names the PyPI component associated with the archive.
+That association does not establish whether vulnerable code is reachable or patched in this build.
+The upstream fix comes from the advisory and may not be available as a conda-forge package.
 
-An interactive terminal adds Rich styling, while written severity and status labels carry the meaning when color is unavailable or output is redirected.
-
-The summary separately counts:
-
-- checked artifacts
-- artifacts mapped to components
-- unmapped artifacts
-- incomplete lookups
-- total matches
-- matches that meet the configured severity threshold
-
-An unmapped artifact is reported as `not_checked`.
-It is not a claim that the artifact has no known vulnerabilities.
-
-A failed attempted lookup is `incomplete`.
-A completed lookup with no finding means only that the provider returned no match for those inputs at that time.
+The summary counts coverage separately from matches.
+An unmapped artifact is `not_checked` and a failed lookup is `incomplete`.
+Neither state means unaffected.
+A completed lookup with no finding only describes the provider's data at that time.
 
 ## Understand the post-solve warning
 
-The plugin's default configuration also checks the packages that conda plans to link after a solve.
-Qualifying matches receive one highest-severity tag in the transaction display, followed by a concise diagnostic that directs you to `conda advise` for details.
+By default, the plugin also checks packages that conda plans to link after a solve.
+Matching records receive a severity tag and a warning that points to `conda advise` for details.
 
 ![post-solve advisory warning](../../demos/post-solve-warning.gif)
 
-The hook runs during dry runs and commands using `-y`.
-It runs synchronously after solving and before conda creates the transaction, so it can delay the command while work uses the configured deadline.
-The deadline stops the scan from waiting for unfinished requests but does not terminate an HTTP worker that is already running.
-Such a worker may finish after the report but cannot change it.
-It does not add another prompt and catches ordinary scan exceptions, so normal provider failures do not abort the transaction.
-Use the [post-solve configuration guide](../how-to/configure-post-solve.md) to change the warning threshold or disable automatic checks.
+The hook runs during dry runs and `-y` commands without adding a prompt.
+Provider failures leave coverage incomplete and let conda continue.
+Use the [post-solve configuration guide](../how-to/configure-post-solve.md) to change the threshold, deadline, or warning mode.
 
 ## Inspect the machine-readable report
 
@@ -157,26 +141,16 @@ See the [JSON reference](../reference/json-output.md) for fields and exit behavi
 
 ## Compare the experimental provider
 
-Run a separate scan with Basilisk:
+Run a separate scan with [Basilisk](https://basilisk.prefix.dev/status):
 
 ```console
 pixi run --locked -e dev conda advise --provider=basilisk
 ```
 
-This sends names and versions from eligible records to Prefix.
-With the default allowed-origin list, ordinary private-channel records have URLs that do not match and are not sent.
-Adding an origin authorizes recognized records under that URL path for lookup, including private records if the configured path contains them.
-Eligibility also requires syntactically valid package names, versions, and conda subdirectories, but the client does not cross-check the record's channel field, filename, or digest against conda-forge metadata.
-Basilisk results use `upstream_version` evidence because the match does not establish the status of one exact conda build.
-
-More precisely, each eligible package contributes one conda package URL containing only the constant `conda` type, the constant `conda-forge` namespace, the canonical package name, and its version.
-It does not call Parselmouth or OSV from your machine.
-
-When a non-withdrawn provider finding has a CVE identifier or alias, KEV enrichment first uses an eligible fresh cached catalog unless `--refresh` was requested.
-Otherwise an online scan attempts a bodyless request for the built-in CISA catalog URL.
-If that request fails, an eligible cached positive catalog may be used as stale and the scan is marked incomplete.
-Offline scans never send this request.
-The request sends no package, component, advisory, or CVE identifier to CISA.
+This sends eligible conda package names and versions to Prefix.
+It uses the same allowed-origin list as the default provider.
+Basilisk results use `upstream_version` evidence because they match names and versions without assessing the exact conda build.
+See the [provider reference](../reference/providers.md) for details.
 
 ## Next steps
 

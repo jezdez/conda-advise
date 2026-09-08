@@ -27,6 +27,22 @@ if TYPE_CHECKING:
     from ..models import Subject
 
 DEFAULT_PARSELMOUTH_URL = "https://conda-mapping.prefix.dev"
+MAX_COMPONENTS_PER_ARTIFACT = 128
+MAX_COMPONENTS_PER_SCAN = 10_000
+
+
+@dataclass
+class _MappingBudget:
+    deadline: float
+    remaining: int
+
+    def parse(self, payload: dict[str, object]) -> tuple[Component, ...] | None:
+        parsed = _parse_mapping(
+            payload, deadline=self.deadline, remaining=self.remaining
+        )
+        if parsed is not None:
+            self.remaining -= len(parsed)
+        return parsed
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +61,7 @@ def discover_components(
     refresh: bool,
     base_url: str = DEFAULT_PARSELMOUTH_URL,
 ) -> ComponentResult:
+    budget = _MappingBudget(deadline, MAX_COMPONENTS_PER_SCAN)
     endpoint = validate_endpoint(base_url)
     cache_source = f"parselmouth:{endpoint}"
     components: dict[str, tuple[Component, ...]] = {}
@@ -65,13 +82,14 @@ def discover_components(
             continue
         cached = cache.get(cache_source, subject.sha256)
         if cached is not None and not refresh and (not cached.stale or offline):
-            _use_cached(subject, cached, components, coverage, failures)
+            _use_cached(budget, subject, cached, components, coverage, failures)
             continue
         if cached is not None and cached.positive:
             fallback[subject.sha256] = cached
         if offline:
             if cached is not None and cached.positive:
                 _use_stale(
+                    budget,
                     subject,
                     cached,
                     components,
@@ -115,12 +133,13 @@ def discover_components(
             continue
         if response.succeeded:
             assert response.payload is not None
-            parsed = _parse_mapping(response.payload)
+            parsed = budget.parse(response.payload)
             if parsed is None:
                 for subject in grouped_subjects:
                     stale = fallback.get(sha256)
                     if stale is not None:
                         _use_stale(
+                            budget,
                             subject,
                             stale,
                             components,
@@ -141,7 +160,9 @@ def discover_components(
                                 provider=ProviderName.OSV,
                                 source="parselmouth",
                                 reason=FailureReason.INVALID_RESPONSE,
-                                message="component mapping has an invalid shape",
+                                message=(
+                                    "component mapping is invalid or exceeds limits"
+                                ),
                                 subject=subject.identifier,
                             )
                         )
@@ -164,6 +185,7 @@ def discover_components(
         for subject in grouped_subjects:
             if stale is not None:
                 _use_stale(
+                    budget,
                     subject,
                     stale,
                     components,
@@ -186,7 +208,11 @@ def discover_components(
     return ComponentResult(components, tuple(coverage), tuple(failures))
 
 
-def _parse_mapping(payload: dict[str, object]) -> tuple[Component, ...] | None:
+def _parse_mapping(
+    payload: dict[str, object], *, deadline: float, remaining: int
+) -> tuple[Component, ...] | None:
+    if time.monotonic() >= deadline:
+        return None
     if "pypi_normalized_names" not in payload or "versions" not in payload:
         return None
     names = payload.get("pypi_normalized_names")
@@ -194,6 +220,10 @@ def _parse_mapping(payload: dict[str, object]) -> tuple[Component, ...] | None:
     if names is None and versions is None:
         return ()
     if not isinstance(names, list) or not isinstance(versions, dict):
+        return None
+    if len(names) > min(MAX_COMPONENTS_PER_ARTIFACT, remaining):
+        return None
+    if len(versions) > min(MAX_COMPONENTS_PER_ARTIFACT, remaining):
         return None
     if any(not is_valid_text(name) for name in names):
         return None
@@ -203,6 +233,8 @@ def _parse_mapping(payload: dict[str, object]) -> tuple[Component, ...] | None:
         return None
     result: list[Component] = []
     for name_value in names:
+        if time.monotonic() >= deadline:
+            return None
         assert isinstance(name_value, str)
         version_value = versions.get(name_value)
         if not is_valid_text(version_value):
@@ -223,6 +255,7 @@ def _parse_mapping(payload: dict[str, object]) -> tuple[Component, ...] | None:
 
 
 def _use_cached(
+    budget: _MappingBudget,
     subject: Subject,
     cached: CacheEntry,
     components: dict[str, tuple[Component, ...]],
@@ -243,7 +276,7 @@ def _use_cached(
                 provider=ProviderName.OSV,
                 source="parselmouth",
                 reason=FailureReason.INVALID_RESPONSE,
-                message="cached component mapping has an invalid shape",
+                message="cached component mapping is invalid or exceeds scan limits",
                 subject=subject.identifier,
             )
         )
@@ -258,7 +291,7 @@ def _use_cached(
             )
         )
         return
-    parsed = _parse_mapping(cached.payload)
+    parsed = budget.parse(cached.payload)
     if parsed is None:
         coverage.append(
             _coverage(
@@ -273,7 +306,7 @@ def _use_cached(
                 provider=ProviderName.OSV,
                 source="parselmouth",
                 reason=FailureReason.INVALID_RESPONSE,
-                message="cached component mapping has an invalid shape",
+                message="cached component mapping is invalid or exceeds scan limits",
                 subject=subject.identifier,
             )
         )
@@ -320,6 +353,7 @@ def _use_cached(
 
 
 def _use_stale(
+    budget: _MappingBudget,
     subject: Subject,
     cached: CacheEntry,
     components: dict[str, tuple[Component, ...]],
@@ -327,9 +361,7 @@ def _use_stale(
     failures: list[ProviderFailure],
     reason: FailureReason,
 ) -> None:
-    parsed = (
-        _parse_mapping(cached.payload) if isinstance(cached.payload, dict) else None
-    )
+    parsed = budget.parse(cached.payload) if isinstance(cached.payload, dict) else None
     if parsed:
         components[subject.identifier] = parsed
     coverage.append(

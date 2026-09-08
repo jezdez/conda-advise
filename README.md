@@ -1,16 +1,15 @@
 # conda-advise
 
-Security advisories usually identify an upstream project and version, while conda installs a particular artifact that can contain patches or vendored components.
-Comparing names alone can produce weak matches, and a missing match can be mistaken for evidence that a package is unaffected.
+`conda-advise` is a [conda](https://docs.conda.io/) plugin that checks an environment's package records for security advisories.
+It uses Prefix's [Parselmouth](https://github.com/prefix-dev/parselmouth) mappings to identify PyPI components in conda artifacts, then queries [OSV](https://osv.dev/) for matching advisories.
+An experimental provider queries Prefix's [Basilisk](https://basilisk.prefix.dev/status) using conda package names and versions.
 
-`conda-advise` reads conda package records for one environment, checks records whose sanitized artifact URL matches a configured allowed origin with one advisory provider, and reports the evidence behind each match and every coverage gap.
-Run `conda advise` for an environment report or let the warning-only post-solve hook call attention to matches before conda changes an environment.
-The common `conda advice` spelling is accepted as an alias.
+Run `conda advise` for a report.
+By default, the plugin also warns about matching packages before conda changes an environment.
+Reports distinguish advisory matches from missing coverage, but do not establish whether vulnerable code is reachable or patched in a particular build.
 
-It does not scan installed files, prove that vulnerable code is reachable or unpatched, remediate packages, enforce policy, or block a transaction based on an advisory result.
-
-The project is alpha software and has no published package release yet.
-Run it from the repository's locked development environment without changing a normal conda installation.
+This is alpha software with no published release yet.
+Try it from the repository's locked development environment.
 
 ## Try it from source
 
@@ -35,15 +34,14 @@ Scan another prefix and request versioned JSON output:
 pixi run --locked -e dev conda advise --prefix /path/to/environment --json
 ```
 
-The default threshold flags high and critical matches.
-When a valid current or permitted stale [CISA Known Exploited Vulnerabilities catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) is available to the scan, every matched CVE listed there also qualifies regardless of severity.
+The default threshold flags high and critical matches, plus matched CVEs in an available [CISA Known Exploited Vulnerabilities catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog).
 
 ![Run a conda advise scan](https://raw.githubusercontent.com/jezdez/conda-advise/main/demos/quickstart.gif)
 
 ## How matching works
 
 ```text
-eligible package record by sanitized artifact URL
+eligible conda package record
 ├── osv, default
 │   └── artifact SHA-256 → Parselmouth → PyPI name and version → OSV
 │       └── artifact_component evidence
@@ -52,36 +50,26 @@ eligible package record by sanitized artifact URL
         └── upstream_version evidence
 ```
 
-The default `osv` path sends the artifact's complete SHA-256 digest to Prefix's [Parselmouth](https://github.com/prefix-dev/parselmouth) service, then sends each normalized PyPI component name and exact version returned by Parselmouth to [OSV](https://osv.dev/).
-Its `artifact_component` evidence means Parselmouth associated that component with the exact archive and OSV matched the component version.
-
-Each unique eligible package name and version contributes one conda package URL to the opt-in `basilisk` path.
-The URL contains only the constant `conda` type, the constant `conda-forge` namespace, the canonical package name, and its version.
-Its `upstream_version` evidence is a name-and-version match and does not establish the status of the exact conda build.
-
-During an online scan, a query match whose valid detail is not satisfied by the cache produces a same-endpoint request whose path contains the percent-encoded advisory identifier.
-When a non-withdrawn provider finding has a CVE identifier or alias, KEV enrichment first uses an eligible cached catalog unless `--refresh` was requested.
-Otherwise an online scan attempts a bodyless request for the CISA catalog without sending a package, component, advisory, or CVE identifier to CISA.
-With the default origin list, records whose sanitized artifact URLs do not match the canonical conda-forge or Prefix mirror URL prefixes are `not_checked` and are not sent to a provider.
-Adding an origin makes recognized records beneath that URL eligible, including private records if the configured path contains them.
-Eligibility also requires syntactically valid package names, versions, and conda subdirectories, but the client does not cross-check the record's channel field, filename, or digest against conda-forge metadata.
-See [privacy](https://jezdez.github.io/conda-advise/explanation/privacy/) for request bodies, paths, normal HTTP metadata, and credentials that conda's session configuration may add.
+Only records with allowed artifact URLs are eligible for lookup.
+The defaults cover the canonical conda-forge channel and Prefix mirror.
+Records from other channels remain `not_checked`.
+Adding a trusted origin also permits lookup of private records beneath that URL, so use a path that contains only packages you intend to identify publicly.
+See [privacy](https://jezdez.github.io/conda-advise/explanation/privacy/) for the exact requests and conda's network settings.
 
 ## Interpret the result
 
 An advisory match is a reason to inspect the exact conda build.
-Neither evidence type proves that vulnerable code is shipped, reachable, enabled, or unpatched.
+`artifact_component` associates a component with the archive, while `upstream_version` matches a package name and version.
 
-Coverage is reported separately from findings.
-An unmapped artifact is `not_checked`, a failed attempted lookup is `incomplete`, and neither state means unaffected.
-Even a completed provider query with no match is only a report about that provider's inputs and data at that time.
+An unmapped artifact is `not_checked` and a failed lookup is `incomplete`.
+Neither state means unaffected, and a completed query with no match only describes that provider's data at that time.
 
 ## Post-solve warnings
 
-The post-solve hook checks only packages selected for linking and adds one highest-severity advisory tag to matching transaction records.
-It runs synchronously after solving and before conda creates the transaction, including for dry runs and `-y` transactions.
-It adds no confirmation prompt and catches ordinary scan errors, so normal provider failures do not abort the transaction.
-Provider and cache work can delay the command, and the configured deadline does not currently terminate an HTTP worker that is already running.
+The post-solve hook checks packages selected for linking, including during dry runs and `-y` transactions.
+It adds severity tags and a warning without another prompt.
+Provider failures leave coverage incomplete and let conda continue.
+See [post-solve configuration](https://jezdez.github.io/conda-advise/how-to/configure-post-solve/) to change the threshold, deadline, or default warning mode.
 
 ![See a post-solve advisory warning](https://raw.githubusercontent.com/jezdez/conda-advise/main/demos/post-solve-warning.gif)
 
@@ -94,6 +82,7 @@ Provider and cache work can delay the command, and the configured deadline does 
 - [Evidence and result wording](https://jezdez.github.io/conda-advise/explanation/matching-and-evidence/)
 - [Privacy](https://jezdez.github.io/conda-advise/explanation/privacy/)
 - [Limitations](https://jezdez.github.io/conda-advise/explanation/limitations/)
+- [Related tools](https://jezdez.github.io/conda-advise/explanation/ecosystem-comparison/), including [conda-sboms](https://github.com/conda-incubator/conda-sboms), [conda-sigstore](https://github.com/jezdez/conda-sigstore), [OSV-Scanner](https://google.github.io/osv-scanner/), and [Grype](https://oss.anchore.com/docs/guides/vulnerability/)
 
 ## Development
 

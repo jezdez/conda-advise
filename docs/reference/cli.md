@@ -41,7 +41,7 @@ Without either option, conda's active or default prefix is used.
 | `--refresh` | Bypass fresh query entries and request current data |
 
 `--offline` and `--refresh` cannot be combined.
-`basilisk` is experimental and transmits names and versions from records whose sanitized artifact URLs match the configured allowed origins to Prefix.
+The experimental [`basilisk` provider](providers.md) sends eligible package names and versions to Prefix.
 
 ## Output
 
@@ -50,9 +50,9 @@ Without either option, conda's active or default prefix is used.
 | `--json` | Write one `conda-advise-report-v1` document to stdout |
 
 conda's standard networking and console options are also accepted through its parser helpers.
-The human report uses Rich to group findings by artifact and present coverage and provider failures as readable tables.
-Color supplements written severity and status labels, and redirected output contains no terminal escape sequences.
-The JSON report is the supported automation interface.
+The human report groups findings by artifact and includes coverage and failures.
+Severity and status labels remain readable without color.
+Use [JSON](json-output.md) for automation.
 
 ## Exit statuses
 

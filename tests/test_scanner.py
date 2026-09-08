@@ -9,7 +9,10 @@ from dataclasses import dataclass
 import pytest
 from conda.models.records import PackageRecord
 
+import conda_advise.components.parselmouth as parselmouth
+import conda_advise.kev as kev
 import conda_advise.network as network
+import conda_advise.providers.common as common
 from conda_advise.models import CoverageStatus, FailureReason
 from conda_advise.scanner import scan_records
 
@@ -19,31 +22,34 @@ class FakeResponse:
     payload: dict[str, object]
     status_code: int = 200
 
-    def raise_for_status(self) -> None:
-        if self.status_code >= 400:
-            raise RuntimeError(f"HTTP {self.status_code}")
 
-    def json(self) -> dict[str, object]:
-        return self.payload
+@pytest.fixture(autouse=True)
+def no_external_requests(monkeypatch):
+    def forbidden(*args, **kwargs):
+        pytest.fail("scanner test attempted an unconfigured provider request")
 
-
-class FakeSession:
-    def __init__(self, route, calls) -> None:
-        self.route = route
-        self.calls = calls
-
-    def request(self, method, url, **options):
-        self.calls.append((method, url, options.get("json"), options.get("timeout")))
-        return self.route(method, url, options.get("json"))
+    for module in (parselmouth, common, kev):
+        monkeypatch.setattr(module, "fetch_json", forbidden)
 
 
 def install_service(monkeypatch, route):
     calls = []
-    monkeypatch.setattr(
-        network,
-        "get_session",
-        lambda url: FakeSession(route, calls),
-    )
+
+    def fetch(requests, *, deadline, max_workers):
+        responses = {}
+        for request in requests:
+            calls.append((request.method, request.url, request.payload, deadline))
+            received = route(request.method, request.url, request.payload)
+            responses[request.key] = network.JsonResponse(
+                request.key,
+                received.payload if received.status_code < 400 else None,
+                received.status_code,
+                FailureReason.REQUEST_FAILED if received.status_code >= 400 else None,
+            )
+        return responses
+
+    for module in (parselmouth, common, kev):
+        monkeypatch.setattr(module, "fetch_json", fetch)
     return calls
 
 

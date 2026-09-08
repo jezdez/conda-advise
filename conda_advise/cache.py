@@ -23,6 +23,11 @@ _SQLITE_LOCKED = 6
 _SQLITE_CORRUPT = 11
 _SQLITE_NOTADB = 26
 _BUSY_TIMEOUT_SECONDS = 5.0
+MAX_ENTRY_BYTES = 16 * 1024 * 1024
+MAX_CACHE_BYTES = 64 * 1024 * 1024
+MAX_CACHE_ENTRIES = 10_000
+MAX_DATABASE_BYTES = 128 * 1024 * 1024
+MAX_WAL_BYTES = 16 * 1024 * 1024
 
 
 class _CacheSchemaError(sqlite3.DatabaseError):
@@ -38,6 +43,9 @@ class CacheEntry:
 
 
 def default_cache_path() -> Path:
+    configured = os.environ.get("CONDA_ADVISE_CACHE_PATH")
+    if configured:
+        return Path(configured)
     return user_cache_path("conda-advise") / "cache.sqlite3"
 
 
@@ -75,11 +83,13 @@ class AdvisoryCache:
         try:
             row = self._connection.execute(
                 """
-                SELECT payload, positive, fetched_at, expires_at, stale_until
+                SELECT CASE WHEN length(CAST(payload AS BLOB)) <= ?
+                            THEN payload END,
+                       positive, fetched_at, expires_at, stale_until
                 FROM cache_entries
                 WHERE source = ? AND cache_key = ?
                 """,
-                (source, key),
+                (MAX_ENTRY_BYTES, source, key),
             ).fetchone()
         except sqlite3.DatabaseError as error:
             if _is_corruption(error):
@@ -113,6 +123,7 @@ class AdvisoryCache:
             and timestamp <= normalized_stale_until
         )
         if not fresh and not stale_positive:
+            self.delete(source, key)
             return None
         try:
             payload = json.loads(payload_json)
@@ -140,20 +151,26 @@ class AdvisoryCache:
         stale_positive_ttl: float = STALE_POSITIVE_SECONDS,
     ) -> None:
         timestamp = time.time() if now is None else now
-        try:
-            serialized = json.dumps(
-                payload,
-                allow_nan=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-        except (OverflowError, RecursionError, TypeError, ValueError):
+        if len(source) > 16_384 or len(key) > 16_384:
+            return
+        serialized = self._serialize(payload)
+        if serialized is None:
             return
         stale_until = timestamp + stale_positive_ttl if positive else timestamp + ttl
         if not self._prepare_operation():
             return
         try:
+            if str(self.path) != ":memory:":
+                wal = self.path.with_name(f"{self.path.name}-wal")
+                try:
+                    if wal.stat().st_size > MAX_WAL_BYTES:
+                        self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                        if wal.stat().st_size > MAX_WAL_BYTES:
+                            return
+                except FileNotFoundError:
+                    pass
             with self._connection:
+                self._prune(self._connection, timestamp)
                 self._connection.execute(
                     """
                     INSERT INTO cache_entries (
@@ -177,8 +194,10 @@ class AdvisoryCache:
                         stale_until,
                     ),
                 )
-        except sqlite3.DatabaseError as error:
-            if not _is_corruption(error):
+                self._prune(self._connection, timestamp)
+            self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except (OSError, sqlite3.DatabaseError) as error:
+            if isinstance(error, OSError) or not _is_corruption(error):
                 return
             if not self._recover_safely():
                 return
@@ -201,6 +220,7 @@ class AdvisoryCache:
                             stale_until,
                         ),
                     )
+                    self._prune(self._connection, timestamp)
             except sqlite3.DatabaseError:
                 return
 
@@ -260,6 +280,7 @@ class AdvisoryCache:
     def _initialize(self, connection: sqlite3.Connection) -> None:
         self._set_busy_timeout(connection)
         connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute(f"PRAGMA journal_size_limit={MAX_ENTRY_BYTES}")
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS cache_entries (
@@ -291,6 +312,58 @@ class AdvisoryCache:
             raise _CacheSchemaError("cache schema is incompatible")
         connection.execute("PRAGMA user_version=1")
         connection.commit()
+        page_size = connection.execute("PRAGMA page_size").fetchone()[0]
+        page_count = connection.execute("PRAGMA page_count").fetchone()[0]
+        if page_size * page_count > MAX_DATABASE_BYTES:
+            with connection:
+                self._prune(connection, time.time())
+            connection.execute("VACUUM")
+        connection.execute(
+            f"PRAGMA max_page_count={max(1, MAX_DATABASE_BYTES // page_size)}"
+        )
+
+    def _serialize(self, payload: Any) -> str | None:
+        if not self._prepare_operation() or not is_json_value(payload):
+            return None
+        parts: list[str] = []
+        size = 0
+        try:
+            encoder = json.JSONEncoder(
+                allow_nan=False, sort_keys=True, separators=(",", ":")
+            )
+            for part in encoder.iterencode(payload):
+                if self.deadline is not None and time.monotonic() >= self.deadline:
+                    return None
+                size += len(part.encode("utf-8"))
+                if size > MAX_ENTRY_BYTES:
+                    return None
+                parts.append(part)
+        except (OverflowError, RecursionError, TypeError, UnicodeError, ValueError):
+            return None
+        return "".join(parts)
+
+    def _prune(self, connection: sqlite3.Connection, now: float) -> None:
+        connection.execute(
+            "DELETE FROM cache_entries WHERE stale_until < ? "
+            "OR length(CAST(payload AS BLOB)) > ?",
+            (now, MAX_ENTRY_BYTES),
+        )
+        connection.execute(
+            """
+            DELETE FROM cache_entries WHERE rowid IN (
+                SELECT rowid FROM (
+                    SELECT rowid,
+                           ROW_NUMBER() OVER recent AS entry_number,
+                           SUM(length(CAST(payload AS BLOB))
+                               + length(CAST(source AS BLOB))
+                               + length(CAST(cache_key AS BLOB))) OVER recent AS bytes
+                    FROM cache_entries
+                    WINDOW recent AS (ORDER BY fetched_at DESC, rowid DESC)
+                ) WHERE entry_number > ? OR bytes > ?
+            )
+            """,
+            (MAX_CACHE_ENTRIES, MAX_CACHE_BYTES),
+        )
 
     def _remaining_busy_timeout(self) -> float:
         if self.deadline is None:

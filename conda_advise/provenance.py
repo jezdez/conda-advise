@@ -23,22 +23,24 @@ DEFAULT_CONDA_FORGE_ORIGINS = (
     "https://conda.anaconda.org/conda-forge",
     "https://prefix.dev/conda-forge",
 )
+MAX_URL_LENGTH = 8192
+MAX_DECODE_PASSES = 8
 
 
 def sanitize_url(value: str) -> str:
-    if not value:
+    if not value or len(value) > MAX_URL_LENGTH:
         return ""
-    without_token, _ = split_anaconda_token(value)
-    parsed = urlsplit(without_token)
-    if not parsed.hostname:
+    try:
+        without_token, _ = split_anaconda_token(value)
+        parsed = urlsplit(without_token)
+        if not parsed.hostname:
+            return ""
+        hostname = parsed.hostname.lower()
+        port = parsed.port
+    except (UnicodeError, ValueError):
         return ""
-    hostname = parsed.hostname.lower()
     if ":" in hostname and not hostname.startswith("["):
         hostname = f"[{hostname}]"
-    try:
-        port = parsed.port
-    except ValueError:
-        return ""
     netloc = f"{hostname}:{port}" if port is not None else hostname
     return urlunsplit((parsed.scheme.lower(), netloc, parsed.path, "", ""))
 
@@ -81,7 +83,12 @@ def validate_endpoint(value: str) -> str:
 
 
 def sanitize_channel_name(value: str) -> str:
-    without_token, _ = split_anaconda_token(value)
+    if len(value) > MAX_URL_LENGTH:
+        return ""
+    try:
+        without_token, _ = split_anaconda_token(value)
+    except (UnicodeError, ValueError):
+        return ""
     if "://" in without_token or without_token.startswith("//"):
         return sanitize_url(without_token)
     if re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9._/-]*", without_token):
@@ -106,30 +113,34 @@ def is_recognized_subject(subject: Subject) -> bool:
 
 
 def subject_from_record(record: PackageRecord) -> Subject:
-    raw_url = str(record.url or "")
-    channel_object = record.channel
-    filename = str(record.fn or "")
-    canonical_name = channel_object.canonical_name
-    channel = sanitize_channel_name(str(canonical_name or ""))
-    if not raw_url and channel:
-        base_url = channel_object.base_url
-        if base_url and record.subdir and filename:
-            raw_url = join_url(base_url, record.subdir, filename)
-    url = sanitize_url(raw_url)
-    if not filename and url:
-        filename = PurePosixPath(unquote(urlsplit(url).path)).name
-    return Subject(
-        name=str(record.name),
-        version=str(record.version),
-        build=str(record.build),
-        build_number=int(record.build_number or 0),
-        subdir=str(record.subdir or ""),
-        channel=channel,
-        url=url,
-        filename=filename,
-        sha256=_normalize_digest(record.sha256, length=64),
-        md5=_normalize_digest(record.md5, length=32),
-    )
+    try:
+        raw_url = str(record.url or "")
+        channel_object = record.channel
+        filename = str(record.fn or "")
+        canonical_name = channel_object.canonical_name
+        channel = sanitize_channel_name(str(canonical_name or ""))
+        if not raw_url and channel:
+            base_url = channel_object.base_url
+            if base_url and record.subdir and filename:
+                raw_url = join_url(base_url, record.subdir, filename)
+        url = sanitize_url(raw_url)
+        if not filename and url:
+            filename = PurePosixPath(unquote(urlsplit(url).path)).name
+        return Subject(
+            name=str(record.name),
+            version=str(record.version),
+            build=str(record.build),
+            build_number=int(record.build_number or 0),
+            subdir=str(record.subdir or ""),
+            channel=channel,
+            url=url,
+            filename=filename,
+            sha256=_normalize_digest(record.sha256, length=64),
+            md5=_normalize_digest(record.md5, length=32),
+        )
+    except Exception:
+        # Conda lazily derives channel and filename fields from credential-bearing URLs.
+        raise ValueError("package record contains invalid metadata") from None
 
 
 def _normalize_digest(value: object, *, length: int) -> str | None:
@@ -141,7 +152,12 @@ def _normalize_digest(value: object, *, length: int) -> str | None:
 
 
 def is_valid_text(value: object) -> TypeGuard[str]:
-    if not isinstance(value, str) or not value or value != value.strip():
+    if (
+        not isinstance(value, str)
+        or not value
+        or len(value) > 16_384
+        or value != value.strip()
+    ):
         return False
     if any(ord(character) < 32 or ord(character) == 127 for character in value):
         return False
@@ -169,8 +185,10 @@ def _normalized_url(value: str) -> SplitResult | None:
 
 
 def _normalized_path(value: str) -> str | None:
+    if len(value) > MAX_URL_LENGTH:
+        return None
     decoded = value
-    while True:
+    for _ in range(MAX_DECODE_PASSES):
         if "\\" in decoded or any(part in {".", ".."} for part in decoded.split("/")):
             return None
         next_value = unquote(decoded)
@@ -179,4 +197,6 @@ def _normalized_path(value: str) -> str | None:
         if next_value.count("/") != decoded.count("/"):
             return None
         decoded = next_value
+    else:
+        return None
     return "/" + "/".join(part for part in decoded.split("/") if part)

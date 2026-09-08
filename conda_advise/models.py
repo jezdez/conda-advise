@@ -298,17 +298,33 @@ class ProviderResult:
 
 
 def is_json_value(value: object) -> bool:
-    if value is None or isinstance(value, (bool, int, str)):
-        return True
-    if isinstance(value, float):
-        return isfinite(value)
-    if isinstance(value, list):
-        return all(is_json_value(item) for item in value)
-    if isinstance(value, dict):
-        return all(
-            isinstance(key, str) and is_json_value(item) for key, item in value.items()
-        )
-    return False
+    pending = [(value, 0)]
+    remaining = 100_000
+    while pending:
+        item, depth = pending.pop()
+        remaining -= 1
+        if remaining < 0 or depth > 64:
+            return False
+        if item is None or isinstance(item, (bool, int)):
+            continue
+        if isinstance(item, str):
+            if len(item) > 1024 * 1024:
+                return False
+        elif isinstance(item, float):
+            if not isfinite(item):
+                return False
+        elif isinstance(item, (list, dict)):
+            if len(item) + len(pending) > remaining:
+                return False
+            if isinstance(item, dict):
+                if any(not isinstance(key, str) or len(key) > 16_384 for key in item):
+                    return False
+                pending.extend((child, depth + 1) for child in item.values())
+            else:
+                pending.extend((child, depth + 1) for child in item)
+        else:
+            return False
+    return True
 
 
 def utc_timestamp(value: float | None = None) -> str:

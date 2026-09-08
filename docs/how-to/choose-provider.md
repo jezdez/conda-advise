@@ -1,7 +1,8 @@
 # Choose an advisory provider
 
-`conda-advise` uses one provider per scan.
-The default is `osv`.
+The default `osv` provider uses [Parselmouth](https://github.com/prefix-dev/parselmouth) and [OSV](https://osv.dev/).
+The experimental alternative uses Prefix's [Basilisk](https://basilisk.prefix.dev/status).
+One provider runs per scan.
 
 Select a provider for one invocation:
 
@@ -34,13 +35,13 @@ plugins:
   conda_advise_provider: basilisk
 ```
 
-The `osv` provider sends an artifact SHA-256 to Prefix's Parselmouth service.
-It sends returned PyPI component names and exact versions to OSV.
+The providers transmit different inputs and return different [matching evidence](../explanation/matching-and-evidence.md):
 
-The `basilisk` provider sends names and versions from records whose sanitized artifact URLs match the configured allowed-origin list to Prefix.
-With the default list, ordinary private-channel records have other URLs and are not eligible.
-Adding an origin authorizes recognized records below that URL path, including private records if the configured path contains them.
-Eligibility also requires syntactically valid package names, versions, and conda subdirectories, but the client does not cross-check the record's channel field, filename, or digest against conda-forge metadata.
-It does not call Parselmouth or OSV directly from your machine.
+| Provider | Requests | Evidence |
+| --- | --- | --- |
+| `osv` | Artifact hash to Parselmouth, then PyPI component names and versions to OSV | `artifact_component` |
+| `basilisk` | Eligible conda package names and versions to Prefix | `upstream_version` |
 
-Read [provider behavior](../reference/providers.md), [privacy](../explanation/privacy.md), and [matching evidence](../explanation/matching-and-evidence.md) before choosing a provider for unattended use.
+Both use the same allowed origins, which exclude ordinary private-channel records by default.
+Adding an origin permits lookup of recognized records beneath it, including private records.
+Read [provider behavior](../reference/providers.md) and [privacy](../explanation/privacy.md) before choosing a provider for unattended use.
