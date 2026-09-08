@@ -1,8 +1,7 @@
 # Cache and freshness
 
-The post-solve hook has a short deadline, while provider data changes less frequently than conda transactions.
-A SQLite cache uses write-ahead logging and a busy timeout for normal concurrent access.
-It keeps repeated checks fast and makes limited offline reporting possible.
+The SQLite cache reuses provider results for repeated checks and [offline scans](../how-to/use-offline.md).
+Set `CONDA_ADVISE_CACHE_PATH` to choose a cache file on any supported platform.
 
 ## Fresh entries
 
@@ -23,11 +22,26 @@ A missing current result therefore becomes `not_checked` or `incomplete` instead
 
 ## Concurrent conda processes
 
-The database uses write-ahead logging and a busy timeout.
-Network workers return typed results to one coordinating thread, which performs cache writes and reporting.
-Workers that finish after the scan deadline cannot alter the completed report.
-The deadline stops waiting and requests cancellation of queued work, but it does not terminate an HTTP worker that is already running.
+The database uses write-ahead logging and a busy timeout for concurrent access.
+HTTP workers return results to the scan process, which writes the cache and report.
+Unfinished workers are terminated at the scan deadline and cannot change a completed report.
 
 If the database is corrupt, `conda-advise` replaces it and continues without cached evidence.
 Corruption recovery renames the database and removes its write-ahead-log sidecars without a separate interprocess recovery lock.
 Normal cache failures do not abort a post-solve transaction.
+
+## Storage limits
+
+The cache prunes expired entries and evicts the oldest entries to remain within these limits:
+
+| Resource | Limit |
+| --- | --- |
+| Entry payload | 16 MiB |
+| Sources, keys, and payloads combined | 64 MiB |
+| Entry count | 10,000 |
+| Database file | 128 MiB |
+
+Evicted or oversized results are unavailable to later offline scans.
+Incomplete provider responses are not cached as complete results.
+Before writing, a write-ahead log larger than 16 MiB is checkpointed.
+If it remains oversized, that cache write is skipped.

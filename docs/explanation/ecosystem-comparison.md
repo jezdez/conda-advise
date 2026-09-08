@@ -1,37 +1,41 @@
 # Related tools and services
 
-With its default allowed-origin list, `conda-advise` is an open client for advisory awareness about records whose sanitized artifact URLs match the public conda-forge or Prefix mirror URL prefixes.
-It does not duplicate existing dashboards, file scanners, or commercial policy products.
+`conda-advise` uses existing mapping and advisory services.
+Other conda tools provide package inventories, attestations, file scans, and environment policy.
 
-## Prefix Parselmouth and Basilisk
+## Mapping and advisory data
 
-[Parselmouth](https://github.com/prefix-dev/parselmouth) provides the exact artifact-to-PyPI-component association used by the default provider.
-Its artifact hash gives `conda-advise` more specific evidence than a name-only mapping.
+[Parselmouth](https://github.com/prefix-dev/parselmouth) maps conda artifacts to PyPI components.
+The default provider looks up an artifact SHA-256 there, then queries [OSV](https://osv.dev/) with the returned component names and versions.
+OSV collects advisory data from [multiple sources](https://google.github.io/osv.dev/data/), including the [PyPA advisory database](https://github.com/pypa/advisory-database).
 
-[Basilisk](https://basilisk.prefix.dev/status) is Prefix's hosted conda-forge vulnerability-matching dashboard and API.
-It accepts conda-forge identities directly, so it can return name-and-version matches for packages without a Parselmouth PyPI mapping.
-`conda-advise` exposes it as an experimental opt-in provider rather than creating another dashboard.
+Prefix's [Basilisk](https://basilisk.prefix.dev/status) provides a conda-forge vulnerability explorer and API.
+The experimental `basilisk` provider queries it with conda names and versions, including packages that may lack a Parselmouth mapping.
+See [provider behavior](../reference/providers.md) for the evidence returned by each path.
 
-Prefix also demonstrates [Grype against materialized conda environments](https://prefix.dev/blog/securing-the-supply-chain).
-Grype scans files and package metadata present in a prefix.
-It is a complementary independent scan and is not invoked or required by `conda-advise`.
+## Inventories and attestations
 
-## Anaconda security products
+[conda-sboms](https://github.com/conda-incubator/conda-sboms) generates software bills of materials from conda environments.
+Use it to record package inventories in SBOM formats.
 
-Anaconda documents authenticated environment scans, artifact-status curation, activation checks, environment logging, dashboards, and policy enforcement in its [environment security tools](https://www.anaconda.com/docs/anaconda-platform/admin/environments), [policies](https://www.anaconda.com/docs/anaconda-platform/admin/policies), and [CVE management](https://www.anaconda.com/docs/anaconda-platform/admin/cve).
-Anaconda also describes its [package SBOMs and their use for component matching](https://www.anaconda.com/blog/sboms-at-anaconda).
+[conda-sigstore](https://github.com/jezdez/conda-sigstore) creates and verifies Sigstore attestations for conda packages.
+Attestations can provide signed evidence about an artifact.
+`conda-advise` does not currently consume SBOM or VEX attestations.
 
-Those paid services can associate curated states such as active, cleared, mitigated, and disputed with artifacts and organizational policy.
-`conda-advise` does not query paid APIs or replace `anaconda audit scan`.
-It reads installed private-channel records locally so it can report records whose sanitized artifact URLs fall outside the configured allowed-origin list as `not_checked`.
-With the default origin list, ordinary private-channel records have other URLs and are not transmitted.
+## Other scanners
 
-Any future Anaconda integration should live in Anaconda-owned code, use `anaconda-auth`, and preserve product entitlements.
+[OSV-Scanner](https://google.github.io/osv-scanner/) checks project dependencies against OSV, with support for lockfiles, SBOMs, directories, and containers.
+Its [GitHub workflow](https://google.github.io/osv-scanner/github-action/) can compare changes introduced by a pull request.
 
-## Future artifact evidence
+[Grype](https://oss.anchore.com/docs/guides/vulnerability/) scans container images, filesystems, and SBOMs for known vulnerabilities.
+Prefix's [supply-chain guide](https://prefix.dev/blog/securing-the-supply-chain) includes an example using Grype on a conda environment.
+These tools inspect different inputs from `conda-advise`, so their coverage and matches can differ.
 
-`conda-sboms` can describe exact conda package identities.
-`conda-sigstore` can verify signed package-bound evidence.
-A future conda-forge workflow could combine package-specific SBOM or VEX attestations with those projects.
+## Anaconda environment security
 
-V1 does not infer such evidence from current package metadata and does not create a separate advisory database.
+Anaconda's [environment monitoring](https://www.anaconda.com/docs/anaconda-platform/admin/environments), [policies](https://www.anaconda.com/docs/anaconda-platform/admin/policies), and [CVE management](https://www.anaconda.com/docs/anaconda-platform/admin/cve) support authenticated scans and organizational package policy.
+Its [SBOM documentation](https://www.anaconda.com/blog/sboms-at-anaconda) describes the component data used for package assessment.
+
+`conda-advise` does not query these services.
+With the default allowed origins, ordinary Anaconda commercial and private-channel records remain `not_checked`.
+See [privacy](privacy.md) for how artifact URLs determine eligibility.

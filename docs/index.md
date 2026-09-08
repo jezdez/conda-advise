@@ -1,30 +1,20 @@
 # conda-advise
 
-Security advisories usually identify upstream projects and versions, while conda installs exact artifacts that can contain patches or vendored components.
-That makes a direct name match weak evidence and makes an absent match easy to misread.
+`conda-advise` is a [conda](https://docs.conda.io/) plugin that checks an environment's package records for security advisories.
+It uses Prefix's [Parselmouth](https://github.com/prefix-dev/parselmouth) mappings to identify PyPI components in conda artifacts, then queries [OSV](https://osv.dev/).
+An experimental provider queries Prefix's [Basilisk](https://basilisk.prefix.dev/status) using conda package names and versions.
 
-With its default allowed-origin list, `conda-advise` checks package records whose sanitized artifact URLs match the canonical conda-forge or Prefix mirror URL prefixes, preserves the reported artifact identity, and tells you what evidence produced each advisory match.
-Run `conda advise` to inspect an environment now.
-The warning-only post-solve hook also calls attention to matching packages after a solve and before installation.
+Run `conda advise` for a report.
+By default, the plugin also warns about matching packages before conda changes an environment.
 
 :::{warning}
-This is alpha software with no published package release.
-Use the [source installation](how-to/install.md) without changing a normal conda installation.
+This is alpha software with no published release yet.
+Use the [source installation](how-to/install.md) to try it.
 :::
 
-## What it does and does not do
+## Try it
 
-`conda-advise` reads installed conda package records from one prefix and reports advisory candidates together with per-artifact coverage.
-The default `osv` provider maps exact artifact hashes to PyPI components before querying OSV.
-The experimental `basilisk` provider instead sends names and versions from eligible records to Prefix.
-
-It does not scan arbitrary files or unmanaged pip installations, prove that vulnerable code is present or reachable, remediate packages, or establish that an environment is safe.
-Records whose sanitized artifact URLs do not match the configured allowed-origin list are read locally so they can be reported as `not_checked`, but they are not sent to a provider.
-Adding an origin authorizes recognized records under that URL path for provider lookup, including private records if the configured path contains them.
-Eligibility also requires syntactically valid package names, versions, and conda subdirectories, but the client does not cross-check the record's channel field, filename, or digest against conda-forge metadata.
-Online scans use conda's network session and can therefore send normal HTTP metadata and configured authentication to the selected service.
-
-Clone the repository and create its locked development environment:
+Clone the repository and create its locked [Pixi](https://pixi.prefix.dev/) development environment:
 
 ::::{tab-set}
 
@@ -50,7 +40,7 @@ pixi install --locked -e dev
 
 ::::
 
-Run the first scan from that checkout:
+Scan the active or default environment:
 
 ```console
 pixi run --locked -e dev conda advise
@@ -58,46 +48,40 @@ pixi run --locked -e dev conda advise
 
 ![conda advise quickstart](../demos/quickstart.gif)
 
-With no target option, the command scans the active or default environment.
-The default threshold flags high and critical matches.
-When a valid current or permitted stale [CISA Known Exploited Vulnerabilities catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) is available to the scan, every matched CVE listed there also qualifies regardless of severity.
+The default threshold flags high and critical matches, plus matched CVEs in an available [CISA Known Exploited Vulnerabilities catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog).
+Follow the [getting-started tutorial](tutorials/getting-started.md) to read the report and scan another environment.
 
-## From package record to evidence
+## What a report tells you
 
-```text
-eligible package record by sanitized artifact URL
-├── osv, default
-│   └── artifact SHA-256 → Parselmouth → PyPI name and version → OSV
-│       └── artifact_component evidence
-└── basilisk, experimental
-    └── name and version in a conda-forge PURL → Prefix Basilisk
-        └── upstream_version evidence
-```
+The report lists advisory matches, their evidence, and coverage for each package record.
+A match can identify a component associated with an exact artifact (`artifact_component`) or an upstream name and version (`upstream_version`).
+Neither proves that vulnerable code is reachable or unpatched in the conda build.
 
-The default path sends an artifact SHA-256 to Prefix's Parselmouth service, then sends the normalized PyPI component name and exact version returned by Parselmouth to OSV.
-`artifact_component` means that the component was associated with the exact archive and its version matched an OSV advisory.
+An unmapped artifact is `not_checked` and a failed lookup is `incomplete`.
+Neither state means unaffected.
+A completed query with no match only describes that provider's data at that time.
+See [matching and evidence](explanation/matching-and-evidence.md) and [limitations](explanation/limitations.md) before acting on a result.
 
-Each unique eligible package name and version contributes one conda package URL to the opt-in Basilisk path.
-That URL contains the constant `conda` type, the constant `conda-forge` namespace, the canonical package name, and its version.
-`upstream_version` means Basilisk matched that name and version, not the exact conda build.
+## What leaves the machine
 
-An advisory match is a reason to investigate the exact package build.
-It does not prove that vulnerable code is reachable or remains unpatched.
-An unmapped package is `not_checked`, a failed attempted lookup is `incomplete`, and neither state means unaffected.
-A completed provider query with no match is only a statement about that provider's inputs and data at that time.
+By default, only records with artifact URLs beneath the canonical conda-forge channel or Prefix mirror are eligible for lookup.
+Records from private, defaults, commercial, local, or unrecognized channels remain `not_checked` when their URLs fall outside those origins.
+Adding a trusted origin permits lookup of recognized records beneath it, including private records.
+
+Online scans send artifact hashes to Parselmouth and component names and versions to OSV, or conda names and versions to Basilisk.
+Requests use conda's network configuration.
+See [privacy](explanation/privacy.md) for the exact requests and authentication behavior, or [run offline](how-to/use-offline.md).
 
 ## Before conda changes an environment
 
-The post-solve hook checks only packages selected for linking.
-It runs synchronously after solving and before conda creates the transaction, so cache and provider work can delay the command until the configured deadline.
-The deadline stops the scan from waiting for unfinished requests and marks their work incomplete.
-It does not terminate an HTTP worker that is already running, which may finish after the report but cannot change it.
-It adds a severity tag to matching transaction records and prints a concise warning without adding a prompt.
-Ordinary scan exceptions are caught, so normal provider failures do not abort the transaction.
+The default post-solve hook checks packages selected for linking, including during dry runs and `-y` transactions.
+It adds severity tags and a warning without another prompt.
+Provider failures leave coverage incomplete and let conda continue.
+Use the [configuration guide](how-to/configure-post-solve.md) to change its threshold, deadline, or warning mode.
 
 ![conda post-solve advisory warning](../demos/post-solve-warning.gif)
 
-## Choose a documentation path
+## Documentation
 
 ::::{grid} 2
 :gutter: 3
@@ -106,50 +90,45 @@ Ordinary scan exceptions are caught, so normal provider failures do not abort th
 :link: tutorials/getting-started
 :link-type: doc
 
-Run a first scan and interpret its coverage and findings.
+Run a scan and read its findings and coverage.
 :::
 
 :::{grid-item-card} {octicon}`tools` How-to guides
 :link: how-to/install
 :link-type: doc
 
-Install from source, configure warnings, run offline, use CI, and trust a mirror.
+Install, configure warnings, run offline, or use CI.
 :::
 
 :::{grid-item-card} {octicon}`list-unordered` Reference
 :link: reference/cli
 :link-type: doc
 
-Look up commands, settings, JSON fields, providers, and coverage reason codes.
+Commands, settings, JSON fields, providers, and reason codes.
 :::
 
 :::{grid-item-card} {octicon}`code` Python API
 :link: reference/python-api
 :link-type: doc
 
-Use the public report, subject, coverage, finding, evidence, and failure models.
+Use the report and evidence models from Python.
 :::
 
 :::{grid-item-card} {octicon}`book` Explanation
 :link: explanation/matching-and-evidence
 :link-type: doc
 
-Understand matching evidence, privacy, caching, limits, and related tools.
+Matching, privacy, caching, and coverage limits.
+:::
+
+:::{grid-item-card} {octicon}`link` Related tools
+:link: explanation/ecosystem-comparison
+:link-type: doc
+
+conda-sboms, conda-sigstore, OSV-Scanner, Grype, and Anaconda.
 :::
 
 ::::
-
-## What leaves the machine
-
-With the default allowed-origin list, only recognized records whose sanitized artifact URLs match the canonical conda-forge or Prefix mirror URL prefixes are eligible for network lookup.
-Ordinary records from private channels, defaults, Anaconda commercial channels, local channels, and unrecognized mirrors have other URLs, so they remain `not_checked` and are not sent.
-Adding an origin makes recognized records below that URL path eligible, including private records if the configured path contains them.
-The origin check does not independently verify the record's channel field, filename, or digest.
-When a non-withdrawn provider finding has a CVE identifier or alias, the client first uses an eligible cached KEV catalog unless `--refresh` was requested.
-Otherwise an online scan attempts to download the CISA KEV catalog without sending a package, component, advisory, or CVE identifier to CISA.
-If that request cannot complete, an eligible cached positive catalog may be used as stale and the scan is marked incomplete.
-Offline scans never send the request.
-Read the complete [privacy behavior](explanation/privacy.md) before enabling a provider in an automated environment.
 
 ```{toctree}
 :hidden:

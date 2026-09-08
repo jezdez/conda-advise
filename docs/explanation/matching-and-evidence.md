@@ -8,24 +8,23 @@ It does not make a final statement about exploitability or the security of an en
 A conda package name and upstream version can have multiple builds for different platforms, dependency constraints, compilers, and patch sets.
 The report therefore keeps the package name, version, build string, subdir, archive filename, channel identity, and SHA-256 together as one subject.
 
-This identity follows the same package-record inputs used by `conda-sboms`.
-It does not infer identity from a package name alone.
+This uses the same package-record inputs as [conda-sboms](https://github.com/conda-incubator/conda-sboms).
 
 ## Artifact-component evidence
 
-The default provider first asks Parselmouth which Python distributions it associates as components of an exact conda archive.
+The default provider asks [Parselmouth](https://github.com/prefix-dev/parselmouth) which Python distributions it associates with an exact conda archive.
 Each returned component is tied to the artifact SHA-256 and represented by a PyPI package URL.
 
 This follows the distinction documented in [purl-associator PR #279](https://github.com/prefix-dev/purl-associator/pull/279).
 A vendored Python distribution is a component of the conda artifact, not another identity for the conda package.
 
 The evidence value is `artifact_component`.
-It establishes that Parselmouth associated the component with that archive and that OSV matched the component version.
+It establishes that Parselmouth associated the component with that archive and that [OSV](https://osv.dev/) matched the component version.
 It does not establish that the vulnerable function is shipped, reachable, enabled, or unpatched by the conda recipe.
 
 ## Upstream-version evidence
 
-Basilisk accepts conda-forge package names and versions and joins them to upstream identifiers and vulnerability data.
+[Basilisk](https://basilisk.prefix.dev/status) accepts conda-forge package names and versions and joins them to upstream identifiers and vulnerability data.
 The evidence value is `upstream_version`.
 
 This match can cover packages that have no Parselmouth component mapping.
@@ -41,10 +40,11 @@ Every retained active source record and alias remains available in JSON.
 Advisory details with a nonempty `withdrawn` value are excluded before findings are built.
 
 OSV commonly supplies CVSS vectors rather than scores.
-`conda-advise` calculates their scores with the `cvss` Python package and retains the original vectors.
-When at least one valid CVSS score is present, the highest score controls threshold filtering.
+`conda-advise` calculates their scores with the [`cvss` Python package](https://github.com/RedHatProductSecurity/cvss) and retains the original vectors.
+Each vector's CVSS version determines its severity band.
+When valid vectors are present, the highest severity controls filtering, while the displayed score is the highest numeric score.
 Otherwise the client falls back to recognized provider severity labels.
-KEV membership always meets the warning threshold because CISA has recorded exploitation in the wild.
+Membership in [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) always meets the warning threshold.
 
 ## Fix versions
 

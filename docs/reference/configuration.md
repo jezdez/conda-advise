@@ -28,8 +28,7 @@ plugins:
 
 KEV matches always qualify regardless of the minimum severity.
 The deadline starts when package-record scanning begins and includes subject normalization, cache access, provider requests, and optional KEV enrichment.
-The deadline stops the scan from waiting for unfinished requests but does not terminate an HTTP worker that is already running.
-Such a worker may finish after the report but cannot change it.
+When it expires, unfinished HTTP request workers are terminated and their coverage is incomplete.
 
 ## Endpoint settings
 
@@ -47,4 +46,10 @@ Loopback HTTP is unencrypted and should be used only for local tests and determi
 
 Changing a service URL does not make a record with a nonmatching artifact URL or an unrecognized package record eligible for lookup.
 Adding an origin does make recognized records below that URL path eligible, including private records if the configured path contains them.
-Recognition does not cross-check the record's channel field, filename, or digest against conda-forge metadata.
+See [privacy](../explanation/privacy.md) for the eligibility checks.
+
+## Cache location
+
+Set `CONDA_ADVISE_CACHE_PATH` to use a specific SQLite cache file on any supported platform.
+An explicit cache path supplied through the Python API takes precedence.
+See [cache and freshness](../explanation/cache-and-freshness.md) for storage limits and expiry.

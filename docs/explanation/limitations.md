@@ -1,27 +1,27 @@
 # Limitations
 
-With its default allowed-origin list, `conda-advise` narrows public vulnerability data to candidates related to records whose sanitized artifact URLs match the canonical conda-forge or Prefix mirror URL prefixes.
-Several facts needed for an exact package assessment are not available in the current public data.
-
-Eligibility also checks the syntax of a record's package name and version and requires a known conda subdirectory.
-It does not verify the record's channel field, filename, or digest against conda-forge metadata.
+`conda-advise` checks package records against provider data.
+It does not scan installed files or verify those records against conda-forge metadata.
+See [privacy](privacy.md) for which records are eligible for lookup.
 
 ## Package contents and patches
 
-Parselmouth associates Python distributions as components of an artifact.
+[Parselmouth](https://github.com/prefix-dev/parselmouth) associates Python distributions with an artifact.
 It does not establish which modules, functions, optional features, or vulnerable code paths remain in that archive.
 
-Basilisk matches upstream identities and versions.
+[Basilisk](https://basilisk.prefix.dev/status) matches upstream identities and versions.
 A conda build may carry backported patches without changing its upstream version.
 
-Neither evidence type replaces recipe inspection, artifact analysis, a package-specific SBOM, or VEX supplied by a responsible maintainer.
+Investigating a match may require recipe inspection, artifact analysis, or package-specific SBOM or VEX evidence.
+[conda-sboms](https://github.com/conda-incubator/conda-sboms) provides package inventories and [conda-sigstore](https://github.com/jezdez/conda-sigstore) can verify signed attestations.
+V1 does not consume those attestations.
 
 ## Ecosystem coverage
 
 The default provider checks only PyPI components returned by Parselmouth.
 Native libraries, statically linked dependencies, vendored non-Python projects, operating-system packages, and unmanaged pip packages may be absent.
 
-OSV does not define a general `Conda` ecosystem query that can replace component discovery.
+The [OSV ecosystem list](https://osv.dev/) does not include a general `Conda` query that replaces component discovery.
 An empty conda package-URL response is therefore not treated as coverage.
 
 ## Provider availability
@@ -30,11 +30,9 @@ Parselmouth and Basilisk are hosted by Prefix.
 OSV and CISA operate separate public services.
 Network failures, rate controls, schema changes, stale caches, and missing mappings can leave a scan incomplete.
 
-The post-solve hook runs synchronously after solving and before conda creates the transaction.
-It can delay the command while cache and provider work use the configured deadline.
-The deadline stops the scan from waiting for unfinished requests but does not terminate an HTTP worker that is already running.
-Such a worker may finish after the report but cannot change it.
-It warns when it has qualifying evidence and catches ordinary scan exceptions, so normal provider failures do not abort the transaction.
+The post-solve hook runs before conda creates the transaction and can delay the command until its scan deadline.
+Provider failures leave coverage incomplete and let conda continue.
+See [post-solve configuration](../how-to/configure-post-solve.md) for timing and warning behavior.
 
 ## Severity and remediation
 
@@ -46,6 +44,6 @@ Fix versions come from upstream advisory records.
 
 ## Windows ARM64 validation
 
-The native Windows 11 ARM64 CI canary builds and installs the wheel from a locked conda-free Pixi environment, then imports conda-independent report models.
-The full suite uses a `win-64` Pixi environment through Windows Prism because conda is not available from the ordinary conda-forge `win-arm64` subdir.
-Native conda plugin discovery and transactions on Windows ARM64 are therefore not covered.
+CI checks native wheel installation and model imports on Windows ARM64.
+The full conda plugin suite runs through x64 emulation.
+See [Windows installation notes](../how-to/install.md) for details.
