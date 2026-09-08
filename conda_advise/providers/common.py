@@ -15,6 +15,23 @@ if TYPE_CHECKING:
     from ..models import Evidence, Subject
 
 
+MAX_PAGES_PER_QUERY = 10
+MAX_SUMMARIES_PER_QUERY = 1000
+MAX_SUMMARIES_PER_SCAN = 10_000
+MAX_DETAILS_PER_SCAN = 10_000
+
+
+@dataclass
+class _SummaryBudget:
+    remaining: int
+
+    def accept(self, count: int) -> bool:
+        if count > self.remaining:
+            return False
+        self.remaining -= count
+        return True
+
+
 @dataclass(frozen=True, slots=True)
 class QueryBinding:
     subject: Subject
@@ -57,6 +74,7 @@ def query_advisories(
     refresh: bool,
     base_url: str,
 ) -> AdvisoryQueryResult:
+    budget = _SummaryBudget(MAX_SUMMARIES_PER_SCAN)
     endpoint = validate_endpoint(base_url)
     query_source = f"{provider.value}.query:{endpoint}"
     detail_source = f"{provider.value}.detail:{endpoint}"
@@ -73,7 +91,7 @@ def query_advisories(
             _parse_cached_summaries(cached) if cached is not None else None
         )
         if cached is not None and not refresh and (not cached.stale or offline):
-            if cached_summaries is not None:
+            if cached_summaries is not None and budget.accept(len(cached_summaries)):
                 summaries[query.key] = cached_summaries
                 states[query.key] = QueryState(
                     stale=cached.stale,
@@ -84,6 +102,7 @@ def query_advisories(
             fallbacks[query.key] = cached
         if offline:
             _use_query_fallback(
+                budget,
                 query,
                 cached,
                 summaries,
@@ -106,11 +125,13 @@ def query_advisories(
             provider=provider,
             endpoint=endpoint,
             deadline=deadline,
+            max_summaries=budget.remaining,
         )
         if received is not None:
             fetched_at = time.time()
             for query in batch:
                 query_summaries = received[query.key]
+                budget.remaining -= len(query_summaries)
                 summaries[query.key] = query_summaries
                 states[query.key] = QueryState(checked_at=fetched_at)
                 cache.put(
@@ -124,6 +145,7 @@ def query_advisories(
         reason = response.reason or FailureReason.INVALID_RESPONSE
         for query in batch:
             _use_query_fallback(
+                budget,
                 query,
                 fallbacks.get(query.key),
                 summaries,
@@ -140,6 +162,30 @@ def query_advisories(
             modified = summary["modified"]
             assert isinstance(advisory_id, str)
             assert isinstance(modified, str)
+            if time.monotonic() >= deadline or (
+                (advisory_id, modified) not in detail_requirements
+                and len(detail_requirements) >= MAX_DETAILS_PER_SCAN
+            ):
+                reason = (
+                    FailureReason.DEADLINE_EXCEEDED
+                    if time.monotonic() >= deadline
+                    else FailureReason.INVALID_RESPONSE
+                )
+                previous = states[query_key]
+                states[query_key] = QueryState(
+                    reason, previous.stale, previous.checked_at
+                )
+                for binding in query_by_key[query_key].bindings:
+                    failures.append(
+                        ProviderFailure(
+                            provider,
+                            provider.value,
+                            reason,
+                            "advisory details exceed scan limits",
+                            binding.subject.identifier,
+                        )
+                    )
+                break
             detail_requirements.setdefault((advisory_id, modified), set()).add(
                 query_key
             )
@@ -279,12 +325,25 @@ def _fetch_query_pages(
     provider: ProviderName,
     endpoint: str,
     deadline: float,
+    max_summaries: int,
 ) -> tuple[dict[str, list[dict[str, object]]] | None, JsonResponse]:
     results = {query.key: [] for query in queries}
     page = [(query, None) for query in queries]
     page_number = 0
+    summary_count = 0
+    tokens: dict[str, set[str]] = {query.key: set() for query in queries}
     last_response = JsonResponse("batch", {}, 200)
     while page:
+        if time.monotonic() >= deadline or page_number >= MAX_PAGES_PER_QUERY:
+            return None, JsonResponse(
+                "batch",
+                None,
+                None,
+                FailureReason.DEADLINE_EXCEEDED
+                if time.monotonic() >= deadline
+                else FailureReason.INVALID_RESPONSE,
+                "advisory pagination exceeds scan limits",
+            )
         body_queries: list[dict[str, object]] = []
         for query, token in page:
             request = dict(query.request)
@@ -310,6 +369,19 @@ def _fetch_query_pages(
             return None, response
         next_page: list[tuple[AdvisoryQuery, str | None]] = []
         for (query, _), (vulns, token) in zip(page, parsed, strict=True):
+            summary_count += len(vulns)
+            if (
+                summary_count > max_summaries
+                or len(results[query.key]) + len(vulns) > MAX_SUMMARIES_PER_QUERY
+                or (token and token in tokens[query.key])
+            ):
+                return None, JsonResponse(
+                    response.key,
+                    None,
+                    response.status_code,
+                    FailureReason.INVALID_RESPONSE,
+                    "advisory pagination exceeds scan limits",
+                )
             results[query.key].extend(vulns)
             if token:
                 if provider is ProviderName.BASILISK:
@@ -320,6 +392,7 @@ def _fetch_query_pages(
                         FailureReason.INVALID_RESPONSE,
                         "Basilisk returned unsupported pagination",
                     )
+                tokens[query.key].add(token)
                 next_page.append((query, token))
         page = next_page
         page_number += 1
@@ -341,11 +414,15 @@ def _parse_batch_response(
     if not isinstance(raw_results, list) or len(raw_results) != expected:
         return None
     parsed: list[tuple[list[dict[str, object]], str | None]] = []
+    summary_count = 0
     for raw_result in raw_results:
         if not isinstance(raw_result, dict):
             return None
         raw_vulns = raw_result.get("vulns", [])
-        if not isinstance(raw_vulns, list):
+        if not isinstance(raw_vulns, list) or len(raw_vulns) > MAX_SUMMARIES_PER_QUERY:
+            return None
+        summary_count += len(raw_vulns)
+        if summary_count > MAX_SUMMARIES_PER_SCAN:
             return None
         vulns: list[dict[str, object]] = []
         for raw_vuln in raw_vulns:
@@ -357,7 +434,7 @@ def _parse_batch_response(
                 return None
             vulns.append({"id": advisory_id, "modified": modified})
         token = raw_result.get("next_page_token")
-        if token is not None and not isinstance(token, str):
+        if token not in (None, "") and not is_valid_text(token):
             return None
         parsed.append((vulns, token))
     return parsed
@@ -369,7 +446,7 @@ def _parse_cached_summaries(cached: CacheEntry) -> list[dict[str, object]] | Non
     parsed = _parse_batch_response(
         JsonResponse("cache", {"results": [cached.payload]}, 200), 1
     )
-    if parsed is None:
+    if parsed is None or parsed[0][1]:
         return None
     summaries = parsed[0][0]
     if cached.positive is not bool(summaries):
@@ -378,6 +455,7 @@ def _parse_cached_summaries(cached: CacheEntry) -> list[dict[str, object]] | Non
 
 
 def _use_query_fallback(
+    budget: _SummaryBudget,
     query: AdvisoryQuery,
     cached: CacheEntry | None,
     summaries: dict[str, list[dict[str, object]]],
@@ -387,7 +465,15 @@ def _use_query_fallback(
     reason: FailureReason,
 ) -> None:
     parsed = _parse_cached_summaries(cached) if cached is not None else None
-    if cached is not None and cached.positive and parsed is not None:
+    if parsed is not None and len(parsed) > budget.remaining:
+        parsed = None
+        reason = FailureReason.INVALID_RESPONSE
+    if (
+        cached is not None
+        and cached.positive
+        and parsed is not None
+        and budget.accept(len(parsed))
+    ):
         summaries[query.key] = parsed
         states[query.key] = QueryState(
             reason,

@@ -24,6 +24,85 @@ def make_subject(*, sha256: str | None = "a" * 64) -> Subject:
     )
 
 
+@pytest.mark.parametrize("offline", [False, True], ids=["network", "cache"])
+@pytest.mark.parametrize("count", [2, 3], ids=["allowed", "too-many"])
+def test_component_limits_apply_before_mapping_and_cache_reuse(
+    monkeypatch, tmp_path, offline, count
+) -> None:
+    monkeypatch.setattr(parselmouth, "MAX_COMPONENTS_PER_ARTIFACT", 2)
+    payload = {
+        "pypi_normalized_names": [f"p{index}" for index in range(count)],
+        "versions": {f"p{index}": "1" for index in range(count)},
+    }
+    monkeypatch.setattr(
+        parselmouth,
+        "fetch_json",
+        lambda requests, **kwargs: {
+            request.key: JsonResponse(request.key, payload, 200) for request in requests
+        },
+    )
+    subject = make_subject()
+    source = f"parselmouth:{parselmouth.DEFAULT_PARSELMOUTH_URL}"
+    with AdvisoryCache(tmp_path / "cache.sqlite3") as cache:
+        if offline:
+            cache.put(source, subject.sha256, payload, positive=True)
+        result = parselmouth.discover_components(
+            [subject],
+            cache=cache,
+            deadline=time.monotonic() + 5,
+            offline=offline,
+            refresh=False,
+        )
+        assert result.coverage[0].status is (
+            CoverageStatus.COMPLETE if count == 2 else CoverageStatus.INCOMPLETE
+        )
+        assert len(result.components.get(subject.identifier, ())) == (
+            count if count == 2 else 0
+        )
+        if not offline and count == 3:
+            assert cache.get(source, subject.sha256) is None
+
+
+@pytest.mark.parametrize("offline", [False, True], ids=["network", "cache"])
+def test_component_budget_is_shared_by_all_artifacts(
+    monkeypatch, tmp_path, offline
+) -> None:
+    monkeypatch.setattr(parselmouth, "MAX_COMPONENTS_PER_SCAN", 3)
+    payload = {
+        "pypi_normalized_names": ["one", "two"],
+        "versions": {"one": "1", "two": "1"},
+    }
+    monkeypatch.setattr(
+        parselmouth,
+        "fetch_json",
+        lambda requests, **kwargs: {
+            request.key: JsonResponse(request.key, payload, 200) for request in requests
+        },
+    )
+    subjects = [make_subject(sha256="a" * 64), make_subject(sha256="b" * 64)]
+    with AdvisoryCache(tmp_path / "cache.sqlite3") as cache:
+        if offline:
+            for subject in subjects:
+                cache.put(
+                    f"parselmouth:{parselmouth.DEFAULT_PARSELMOUTH_URL}",
+                    subject.sha256,
+                    payload,
+                    positive=True,
+                )
+        result = parselmouth.discover_components(
+            subjects,
+            cache=cache,
+            deadline=time.monotonic() + 5,
+            offline=offline,
+            refresh=False,
+        )
+    assert [item.status for item in result.coverage] == [
+        CoverageStatus.COMPLETE,
+        CoverageStatus.INCOMPLETE,
+    ]
+    assert sum(map(len, result.components.values())) == 2
+
+
 @pytest.mark.parametrize(
     ("payload", "status", "reason"),
     [
