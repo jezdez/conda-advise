@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 
 import pytest
 
@@ -142,3 +144,54 @@ def test_global_conda_json_produces_one_json_document(
     assert result == 0
     assert not captured.err
     assert json.loads(captured.out)["target"] == str(prefix)
+
+
+@pytest.mark.parametrize(
+    "field", ["url", "channel"], ids=["derived-channel", "stored-channel"]
+)
+@pytest.mark.parametrize("json_output", [False, True], ids=["terminal", "json"])
+def test_malformed_prefix_metadata_never_prints_credentials(
+    monkeypatch, tmp_path, field, json_output
+) -> None:
+    prefix = tmp_path / "environment"
+    metadata = prefix / "conda-meta"
+    metadata.mkdir(parents=True)
+    (metadata / "history").touch()
+    record = {
+        "name": "test",
+        "version": "1",
+        "build": "0",
+        "build_number": 0,
+        "subdir": "noarch",
+        "fn": "test-1-0.conda",
+        "depends": [],
+        "url": "https://conda.anaconda.org/conda-forge/noarch/test-1-0.conda",
+    }
+    record[field] = (
+        "https://user:synthetic-secret@conda.example\uff0fhost/test-1-0.conda"
+    )
+    (metadata / "test-1-0.json").write_text(json.dumps(record))
+    monkeypatch.setenv("CONDA_ADVISE_CACHE_PATH", str(tmp_path / "cache.sqlite3"))
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "conda",
+            "advise",
+            "-p",
+            str(prefix),
+            "--offline",
+            "--provider",
+            "osv",
+            *(["--json"] if json_output else []),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == 2
+    assert "synthetic-secret" not in result.stdout + result.stderr
+    if json_output:
+        assert json.loads(result.stdout)["error"]["message"]
+    else:
+        assert "could not load package records" in result.stderr

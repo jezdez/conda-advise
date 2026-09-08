@@ -252,14 +252,72 @@ def test_sanitize_url_rejects_invalid_ports() -> None:
 
 @pytest.mark.parametrize(
     "url",
-    ["https://user:secret@", "//user:secret@", "user:secret@"],
-    ids=["scheme", "authority", "relative"],
+    [
+        "https://user:secret@",
+        "//user:secret@",
+        "user:secret@",
+        "https://user:secret@[not-ipv6]/package",
+        "https://user:secret@[::1/package",
+        "https://user:secret@host\uff0fother/package",
+    ],
+    ids=[
+        "scheme",
+        "authority",
+        "relative",
+        "invalid-ipv6",
+        "unclosed-ipv6",
+        "nfkc-host",
+    ],
 )
 def test_sanitize_url_never_returns_credentials_from_malformed_urls(url: str) -> None:
     sanitized = sanitize_url(url)
 
     assert "user" not in sanitized
     assert "secret" not in sanitized
+
+
+@pytest.mark.parametrize(
+    "depth", [1, 7, 8, 1000], ids=["plain", "accepted", "too-deep", "nested"]
+)
+def test_origin_decoding_has_a_fixed_limit(depth) -> None:
+    value = "a"
+    for _ in range(depth):
+        value = value.replace("%", "%25") if "%" in value else "%61"
+    url = f"https://conda.anaconda.org/conda-forge/{value}.conda"
+    assert is_allowed_origin(url) is (depth < 8)
+
+
+def test_oversized_urls_are_rejected_before_parsing(monkeypatch) -> None:
+    import conda_advise.provenance as provenance
+
+    def forbidden(value):
+        pytest.fail("oversized input reached the URL parser")
+
+    monkeypatch.setattr(provenance, "split_anaconda_token", forbidden)
+    assert sanitize_url("https://example.invalid/" + "x" * 8192) == ""
+    assert sanitize_channel_name("x" * 8193) == ""
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [{"fn": "test.conda"}, {"channel": "conda-forge"}],
+    ids=["derived-channel", "derived-filename"],
+)
+def test_derived_record_fields_cannot_leak_url_credentials(fields) -> None:
+    record = PackageRecord(
+        name="test",
+        version="1",
+        build="0",
+        build_number=0,
+        subdir="noarch",
+        url="https://user:synthetic-secret@conda.example\uff0fhost/a.conda",
+        **fields,
+    )
+    with pytest.raises(
+        ValueError, match="package record contains invalid metadata"
+    ) as caught:
+        subject_from_record(record)
+    assert "synthetic-secret" not in str(caught.value)
 
 
 @pytest.mark.parametrize(

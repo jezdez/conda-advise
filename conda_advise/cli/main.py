@@ -121,9 +121,9 @@ def execute(args: Namespace) -> int:
             basilisk_url=getattr(settings, BASILISK_URL_SETTING),
             target=str(prefix),
         )
-    except Exception as error:
+    except Exception:
         render_error(
-            str(error),
+            "could not load package records or complete the advisory scan",
             json_output=json_output,
             target=str(prefix) if "prefix" in locals() else None,
         )

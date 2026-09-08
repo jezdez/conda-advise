@@ -211,9 +211,9 @@ def _post_solve(
                 context.json or getattr(context, "console", None) == "json"
             ),
         )
-    except Exception as error:
+    except Exception:
         import logging
 
         logging.getLogger(__name__).warning(
-            "conda-advise could not complete the advisory check: %s", error
+            "conda-advise could not complete the advisory check"
         )

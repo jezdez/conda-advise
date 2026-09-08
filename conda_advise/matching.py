@@ -92,9 +92,9 @@ def build_findings(matches: list[AdvisoryMatch]) -> tuple[Finding, ...]:
         score = max(scores) if scores else None
         severity = max(
             (
-                Severity.from_score(score, cvss_type=vector.type)
+                Severity.from_score(vector.base_score, cvss_type=vector.type)
                 for vector in vectors
-                if vector.base_score == score
+                if vector.base_score is not None
             ),
             key=lambda item: item.rank,
             default=Severity.UNKNOWN,
