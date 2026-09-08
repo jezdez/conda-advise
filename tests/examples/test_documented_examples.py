@@ -34,6 +34,8 @@ def advisory_services(
     environment["CONDA_ADVISE_CACHE_PATH"] = str(tmp_path / "cache" / "cache.sqlite3")
     environment["CONDARC"] = str(tmp_path / "condarc")
     environment["CONDA_PKGS_DIRS"] = str(tmp_path / "pkgs")
+    # These examples test provider results and cache reuse, not startup speed.
+    environment["CONDA_PLUGINS_CONDA_ADVISE_TIMEOUT_SECONDS"] = "30"
     server = subprocess.Popen(
         [sys.executable, str(DEMO_FIXTURES / "server.py"), str(tmp_path)],
         cwd=PROJECT_ROOT,
