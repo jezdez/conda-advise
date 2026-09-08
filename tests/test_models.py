@@ -12,9 +12,19 @@ from conda_advise.models import is_json_value
         ({"items": [0] * 100_000}, False),
         ({"data": "a" * (1024 * 1024 + 1)}, False),
         ({"a" * 16_385: True}, False),
+        ({1: "value"}, False),
         ({"value": float("inf")}, False),
+        ({"value": b"bytes"}, False),
     ],
-    ids=["ordinary", "node-limit", "string-limit", "key-limit", "nonfinite"],
+    ids=[
+        "ordinary",
+        "node-limit",
+        "string-limit",
+        "key-limit",
+        "non-string-key",
+        "nonfinite",
+        "bytes",
+    ],
 )
 def test_json_values_have_resource_limits(payload, valid) -> None:
     assert is_json_value(payload) is valid

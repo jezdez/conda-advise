@@ -62,7 +62,7 @@ Neither state means unaffected.
 A completed query with no match only describes that provider's data at that time.
 See [matching and evidence](explanation/matching-and-evidence.md) and [limitations](explanation/limitations.md) before acting on a result.
 
-## What leaves the machine
+## Data sent to advisory services
 
 By default, only records with artifact URLs beneath the canonical conda-forge channel or Prefix mirror are eligible for lookup.
 Records from private, defaults, commercial, local, or unrecognized channels remain `not_checked` when their URLs fall outside those origins.

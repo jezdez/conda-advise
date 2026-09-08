@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -25,14 +26,18 @@ def make_subject(*, sha256: str | None = "a" * 64) -> Subject:
 
 
 @pytest.mark.parametrize("offline", [False, True], ids=["network", "cache"])
-@pytest.mark.parametrize("count", [2, 3], ids=["allowed", "too-many"])
+@pytest.mark.parametrize(
+    ("name_count", "version_count"),
+    [(2, 2), (3, 3), (2, 3)],
+    ids=["allowed", "too-many-names", "too-many-versions"],
+)
 def test_component_limits_apply_before_mapping_and_cache_reuse(
-    monkeypatch, tmp_path, offline, count
+    monkeypatch, tmp_path, offline, name_count, version_count
 ) -> None:
     monkeypatch.setattr(parselmouth, "MAX_COMPONENTS_PER_ARTIFACT", 2)
     payload = {
-        "pypi_normalized_names": [f"p{index}" for index in range(count)],
-        "versions": {f"p{index}": "1" for index in range(count)},
+        "pypi_normalized_names": [f"p{index}" for index in range(name_count)],
+        "versions": {f"p{index}": "1" for index in range(version_count)},
     }
     monkeypatch.setattr(
         parselmouth,
@@ -53,13 +58,14 @@ def test_component_limits_apply_before_mapping_and_cache_reuse(
             offline=offline,
             refresh=False,
         )
+        allowed = name_count == version_count == 2
         assert result.coverage[0].status is (
-            CoverageStatus.COMPLETE if count == 2 else CoverageStatus.INCOMPLETE
+            CoverageStatus.COMPLETE if allowed else CoverageStatus.INCOMPLETE
         )
         assert len(result.components.get(subject.identifier, ())) == (
-            count if count == 2 else 0
+            2 if allowed else 0
         )
-        if not offline and count == 3:
+        if not offline and not allowed:
             assert cache.get(source, subject.sha256) is None
 
 
@@ -103,6 +109,7 @@ def test_component_budget_is_shared_by_all_artifacts(
     assert sum(map(len, result.components.values())) == 2
 
 
+@pytest.mark.parametrize("offline", [False, True], ids=["network", "cache"])
 @pytest.mark.parametrize(
     ("payload", "status", "reason"),
     [
@@ -209,7 +216,7 @@ def test_component_budget_is_shared_by_all_artifacts(
     ],
 )
 def test_discover_components_distinguishes_empty_and_malformed(
-    monkeypatch, tmp_path, payload, status, reason
+    monkeypatch, tmp_path, payload, status, reason, offline
 ) -> None:
     monkeypatch.setattr(
         parselmouth,
@@ -219,17 +226,78 @@ def test_discover_components_distinguishes_empty_and_malformed(
         },
     )
 
+    subject = make_subject()
     with AdvisoryCache(tmp_path / "cache.sqlite3") as cache:
+        if offline:
+            cache.put(
+                f"parselmouth:{parselmouth.DEFAULT_PARSELMOUTH_URL}",
+                subject.sha256,
+                payload,
+                positive=True,
+            )
         result = parselmouth.discover_components(
-            [make_subject()],
+            [subject],
             cache=cache,
             deadline=time.monotonic() + 1,
-            offline=False,
+            offline=offline,
             refresh=False,
         )
 
     assert result.coverage[0].status is status
     assert result.coverage[0].reason is reason
+
+
+@pytest.mark.parametrize("expiration", ["before", "during", "never"])
+def test_cached_mapping_deadline_discards_partial_components(
+    monkeypatch, tmp_path, expiration
+) -> None:
+    subject = make_subject()
+    payload = {
+        "pypi_normalized_names": ["first", "second"],
+        "versions": {"first": "1", "second": "2"},
+    }
+    now = 10 if expiration == "before" else 0
+    normalized = []
+    normalize = parselmouth._normalize_pypi_name
+
+    def normalize_component(name):
+        nonlocal now
+        normalized.append(name)
+        if expiration == "during":
+            now = 10
+        return normalize(name)
+
+    monkeypatch.setattr(
+        parselmouth, "time", SimpleNamespace(monotonic=lambda: now, time=time.time)
+    )
+    monkeypatch.setattr(parselmouth, "_normalize_pypi_name", normalize_component)
+    monkeypatch.setattr(
+        parselmouth,
+        "fetch_json",
+        lambda requests, **options: pytest.fail("cached mapping requested the network"),
+    )
+    with AdvisoryCache(tmp_path / "cache.sqlite3") as cache:
+        cache.put(
+            f"parselmouth:{parselmouth.DEFAULT_PARSELMOUTH_URL}",
+            subject.sha256,
+            payload,
+            positive=True,
+        )
+        result = parselmouth.discover_components(
+            [subject], cache=cache, deadline=10, offline=True, refresh=False
+        )
+
+    if expiration == "never":
+        assert normalized == ["first", "second"]
+        assert len(result.components[subject.identifier]) == 2
+        assert result.coverage[0].status is CoverageStatus.COMPLETE
+        assert not result.failures
+    else:
+        assert normalized == ([] if expiration == "before" else ["first"])
+        assert not result.components
+        assert result.coverage[0].status is CoverageStatus.INCOMPLETE
+        assert result.coverage[0].reason is FailureReason.INVALID_RESPONSE
+        assert result.failures[0].reason is FailureReason.INVALID_RESPONSE
 
 
 @pytest.mark.parametrize(

@@ -1,6 +1,6 @@
 # Privacy
 
-Provider lookup can disclose that a machine is evaluating a package or component.
+Online scans send package or component identifiers to advisory services.
 Only records whose sanitized artifact URLs match the configured allowed origins are eligible for provider lookup.
 
 ## Eligible records
@@ -24,7 +24,7 @@ conda can separately authenticate a configured endpoint as described below.
 The local JSON report includes credential-free identities and sanitized origins for all subjects, including excluded records.
 Excluded identities are neither sent to providers nor cached as provider query input.
 
-## Metadata shared by every request
+## Request metadata
 
 Every online lookup uses conda's [`get_session()`](https://docs.conda.io/projects/conda/en/stable/dev-guide/api/conda/gateways/connection/session/index.html) interface.
 The destination service receives the request method, host, path, request body size, timing, and the source address presented by the network connection.
@@ -35,7 +35,7 @@ The client requests `Accept-Encoding: identity` and rejects compressed responses
 JSON posts include `Content-Type: application/json` and their encoded content length.
 On conda versions that provide them, session-header and request-header plugins can add permitted headers for a matching host and path.
 Cookies set by an endpoint can be returned on a later request that reuses its conda session.
-Retries can expose repeated copies of the same request.
+Retries send the same request again.
 
 conda applies configured proxy, certificate, TLS verification, and authentication settings to these requests.
 An HTTPS proxy normally sees the destination host, connection metadata, and transfer size.
@@ -98,20 +98,20 @@ During an online scan, every query match whose valid detail is not satisfied by 
 The path contains the percent-encoded advisory ID returned by Basilisk and has no application body.
 Basilisk pagination tokens are not accepted or retransmitted in v1.
 
-Selecting `--provider=basilisk` opts into that transmission for one run.
+Selecting `--provider=basilisk` uses Basilisk for that run.
 Setting `plugins.conda_advise_provider` to `basilisk` enables it for manual scans and post-solve checks until configuration changes.
 
 Basilisk requests omit local prefix paths and excluded records.
 KEV enrichment uses the same CISA request described for the `osv` provider.
 
-## Correlation and inventory disclosure
+## Package information visible to services
 
-Services can correlate requests into a partial package inventory.
+Services can combine requests to identify eligible packages in an environment.
 
 Parselmouth can correlate concurrently requested artifact hashes through source address, timing, conda metadata, configured credentials, and request headers.
 OSV sees as many as 1,000 component names and versions together in a batch and then sees the advisory IDs requested for details.
 Basilisk sees as many as 1,000 eligible package names and versions together in each batch and then sees the advisory IDs requested for details.
-For a prefix with at most 1,000 unique eligible inputs, one batch can disclose the entire eligible component or package subset to that service.
+For a prefix with at most 1,000 unique eligible inputs, one batch can contain all eligible components or packages.
 Multiple batches, retries, detail requests, and KEV timing can be correlated into a larger partial inventory.
 
 Only one provider runs for a scan.
@@ -123,5 +123,5 @@ Excluded records never appear in provider paths or bodies.
 The [SQLite cache](cache-and-freshness.md) stores eligible sanitized request inputs, validated provider data, status, and timestamps.
 It omits excluded provider inputs, conda credentials, and unsanitized URLs.
 
-Use `--offline` when no provider requests are acceptable.
+Use `--offline` to scan with cached data and make no provider requests.
 The resulting report states which artifacts lacked usable cached coverage.
