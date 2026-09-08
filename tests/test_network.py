@@ -10,7 +10,9 @@ import sys
 import textwrap
 import threading
 import time
+from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 import pytest
@@ -344,15 +346,20 @@ def test_fetch_json_reports_nontransferable_plugins_as_incomplete(http_server) -
     assert not requests
 
 
+@pytest.mark.parametrize(
+    "failure",
+    ["ValueError('synthetic-secret')", "SystemExit(17)"],
+    ids=["reported-error", "worker-exit"],
+)
 def test_fetch_json_reports_worker_plugin_restore_failures(
-    monkeypatch, tmp_path, http_server
+    monkeypatch, tmp_path, http_server, failure
 ) -> None:
     url, requests = http_server
     plugin_file = tmp_path / "advise_broken_state_plugin.py"
     plugin_file.write_text(
         "class TestPlugin:\n"
         "    def __setstate__(self, state):\n"
-        "        raise ValueError('synthetic-secret')\n",
+        f"        raise {failure}\n",
         encoding="utf-8",
     )
     monkeypatch.syspath_prepend(str(tmp_path))
@@ -557,3 +564,194 @@ def test_request_worker_serves_multiple_requests_and_exits_on_parent_eof(
             process.kill()
         process.join()
         process.close()
+
+
+def test_fetch_json_closes_resources_when_process_start_fails(
+    monkeypatch, http_server
+) -> None:
+    url, requests = http_server
+    process_context = multiprocessing.get_context("spawn")
+    processes = []
+    connections = []
+    create_pipe = process_context.Pipe
+
+    def record_pipe():
+        pair = create_pipe()
+        connections.extend(pair)
+        return pair
+
+    def fail_start(process):
+        processes.append(process)
+        raise OSError("process resources unavailable")
+
+    monkeypatch.setattr(process_context, "Pipe", record_pipe)
+    monkeypatch.setattr(process_context.Process, "start", fail_start)
+
+    response = fetch_json(
+        [JsonRequest("key", "GET", url)],
+        deadline=time.monotonic() + 30,
+        max_workers=1,
+    )["key"]
+
+    assert response.reason is FailureReason.REQUEST_FAILED
+    assert response.payload is None
+    assert not requests
+    assert len(processes) == 1
+    assert len(connections) == 2
+    assert all(connection.closed for connection in connections)
+    with pytest.raises(ValueError, match="closed"):
+        processes[0].is_alive()
+
+
+def test_fetch_json_preserves_completed_results_when_the_next_send_fails(
+    monkeypatch, http_server
+) -> None:
+    url, requests = http_server
+    process_context = multiprocessing.get_context("spawn")
+    create_pipe = process_context.Pipe
+    connections = []
+
+    def disconnected_pipe():
+        connection, child_connection = create_pipe()
+        connections.extend((connection, child_connection))
+
+        def fail_send(request):
+            assert request.key == "second"
+            raise BrokenPipeError("worker connection closed")
+
+        monkeypatch.setattr(connection, "send", fail_send)
+        return connection, child_connection
+
+    monkeypatch.setattr(process_context, "Pipe", disconnected_pipe)
+    responses = fetch_json(
+        [
+            JsonRequest("first", "POST", url, {"value": 1}),
+            JsonRequest("second", "POST", url, {"value": 2}),
+        ],
+        deadline=time.monotonic() + 30,
+        max_workers=1,
+    )
+
+    assert responses["first"].succeeded
+    assert responses["second"].reason is FailureReason.REQUEST_FAILED
+    assert responses["second"].payload is None
+    assert [(method, payload) for method, _, payload, _ in requests] == [
+        ("POST", {"value": 1}),
+    ]
+    assert all(connection.closed for connection in connections)
+    assert not multiprocessing.active_children()
+
+
+def test_worker_state_preserves_blocked_plugins_and_removes_transient_blocks() -> None:
+    original = network._CondaState.capture()
+    manager = context.plugin_manager
+    try:
+        manager.set_blocked("advise-parent-disabled")
+        selected = network._CondaState.capture()
+        manager.unblock("advise-parent-disabled")
+        manager.set_blocked("advise-worker-transient")
+
+        selected.restore()
+
+        assert manager.is_blocked("advise-parent-disabled")
+        assert not manager.is_blocked("advise-worker-transient")
+    finally:
+        original.restore()
+
+
+def test_request_worker_closes_connection_after_plugin_restore_error(
+    http_server,
+) -> None:
+    url, requests = http_server
+    state = network._CondaState.capture()
+    state = replace(
+        state,
+        plugins=(
+            *state.plugins,
+            ("removed-plugin", "advise_plugin_removed_before_spawn"),
+        ),
+    )
+    process_context = multiprocessing.get_context("spawn")
+    connection, child_connection = process_context.Pipe()
+    process = process_context.Process(
+        target=network._request_worker,
+        args=(
+            child_connection,
+            pickle.dumps(state),
+            JsonRequest("key", "GET", url),
+            time.monotonic() + 60,
+        ),
+    )
+    process.start()
+    child_connection.close()
+    try:
+        assert connection.poll(30)
+        assert connection.recv() is None
+        process.join(timeout=10)
+        assert process.exitcode == 0
+        assert connection.poll(1)
+        with pytest.raises(EOFError):
+            connection.recv()
+        assert not requests
+    finally:
+        connection.close()
+        if process.is_alive():
+            process.kill()
+        process.join()
+        process.close()
+
+
+def test_fetch_json_does_not_start_workers_after_configuration_uses_the_budget(
+    monkeypatch, http_server
+) -> None:
+    url, requests = http_server
+    instants = iter((0.0, 5.0))
+    monkeypatch.setattr(
+        network, "time", SimpleNamespace(monotonic=lambda: next(instants))
+    )
+
+    response = fetch_json(
+        [JsonRequest("key", "GET", url)], deadline=5.0, max_workers=1
+    )["key"]
+
+    assert response.reason is FailureReason.DEADLINE_EXCEEDED
+    assert not requests
+    assert not multiprocessing.active_children()
+
+
+def test_fetch_one_stops_streaming_and_closes_response_at_the_deadline(
+    monkeypatch, http_server
+) -> None:
+    url, _ = http_server
+    session = CondaSession()
+    send = session.send
+    responses = []
+    reads = []
+    instant = 0.0
+
+    def record_send(request, **options):
+        response = send(request, **options)
+        responses.append(response)
+        read = response.raw.read
+
+        def read_then_expire(size, **kwargs):
+            nonlocal instant
+            reads.append(size)
+            chunk = read(size, **kwargs)
+            instant = 5.0
+            return chunk
+
+        monkeypatch.setattr(response.raw, "read", read_then_expire)
+        return response
+
+    monkeypatch.setattr(session, "send", record_send)
+    monkeypatch.setattr(network, "get_session", lambda url: session)
+    monkeypatch.setattr(network, "time", SimpleNamespace(monotonic=lambda: instant))
+    monkeypatch.setattr(network, "_READ_BYTES", 32)
+
+    response = _fetch_one(JsonRequest("key", "GET", f"{url}/unadvertised"), 5.0)
+
+    assert response.reason is FailureReason.DEADLINE_EXCEEDED
+    assert response.payload is None
+    assert reads == [32]
+    assert responses[0].raw.closed
