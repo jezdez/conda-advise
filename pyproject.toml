@@ -71,7 +71,9 @@ schema = "conda_advise/schema"
 
 [tool.coverage.run]
 branch = true
+concurrency = ["multiprocessing"]
 omit = ["conda_advise/_version.py"]
+patch = ["subprocess"]
 source = ["conda_advise"]
 
 [tool.coverage.report]
@@ -126,7 +128,7 @@ platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64", "win-64"]
 [tool.pixi.feature.test.dependencies]
 jsonschema = ">=4.0"
 pytest = ">=8.0"
-pytest-cov = ">=6.0"
+pytest-cov = ">=7.0"
 
 [tool.pixi.feature.test]
 platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64", "win-64"]

@@ -3,6 +3,8 @@ from __future__ import annotations
 import gzip
 import importlib
 import json
+import multiprocessing
+import pickle
 import subprocess
 import sys
 import textwrap
@@ -220,7 +222,9 @@ def test_fetch_json_bounds_advertised_streamed_and_compressed_bodies(
     assert response.payload is None
 
 
-@pytest.mark.parametrize("path", ["/307", "/407", "/oversized", "/gzip"])
+@pytest.mark.parametrize(
+    "path", ["/307", "/407", "/oversized", "/invalid-length", "/gzip"]
+)
 def test_response_guard_rejects_headers_before_reading_the_body(
     monkeypatch, path
 ) -> None:
@@ -241,6 +245,8 @@ def test_response_guard_rejects_headers_before_reading_the_body(
     response.status_code = int(path[1:]) if path in ("/307", "/407") else 200
     if path == "/oversized":
         response.headers["Content-Length"] = str(network.MAX_RESPONSE_BYTES + 1)
+    if path == "/invalid-length":
+        response.headers["Content-Length"] = "not-a-number"
     if path == "/gzip":
         response.headers["Content-Encoding"] = "gzip"
 
@@ -338,6 +344,38 @@ def test_fetch_json_reports_nontransferable_plugins_as_incomplete(http_server) -
     assert not requests
 
 
+def test_fetch_json_reports_worker_plugin_restore_failures(
+    monkeypatch, tmp_path, http_server
+) -> None:
+    url, requests = http_server
+    plugin_file = tmp_path / "advise_broken_state_plugin.py"
+    plugin_file.write_text(
+        "class TestPlugin:\n"
+        "    def __setstate__(self, state):\n"
+        "        raise ValueError('synthetic-secret')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    plugin_module = importlib.import_module("advise_broken_state_plugin")
+    plugin = plugin_module.TestPlugin()
+    plugin.enabled = True
+    manager = context.plugin_manager
+    manager.register(plugin)
+    try:
+        response = fetch_json(
+            [JsonRequest("key", "GET", url)],
+            deadline=time.monotonic() + 30,
+            max_workers=1,
+        )["key"]
+    finally:
+        manager.unregister(plugin)
+        sys.modules.pop("advise_broken_state_plugin", None)
+
+    assert response.reason is FailureReason.REQUEST_FAILED
+    assert response.message == "request worker failed"
+    assert not requests
+
+
 @pytest.mark.parametrize("offline", [False, True], ids=["online", "offline"])
 def test_worker_discards_sessions_cached_during_plugin_import(
     monkeypatch, tmp_path, http_server, offline
@@ -393,6 +431,8 @@ def test_worker_discards_sessions_cached_during_plugin_import(
 @pytest.mark.parametrize("path", ["/stall", "/drip"])
 def test_deadline_kills_workers_and_allows_interpreter_exit(http_server, path) -> None:
     url, requests = http_server
+    # Emulated Windows runners need time to start the worker before it can stall.
+    deadline_seconds = 10
     code = textwrap.dedent("""\
         import multiprocessing
         import sys
@@ -402,7 +442,7 @@ def test_deadline_kills_workers_and_allows_interpreter_exit(http_server, path) -
 
         responses = fetch_json(
             [JsonRequest(str(i), 'GET', sys.argv[1]) for i in range(100)],
-            deadline=time.monotonic() + 2,
+            deadline=time.monotonic() + float(sys.argv[2]),
             max_workers=20,
         )
         assert all(
@@ -414,15 +454,15 @@ def test_deadline_kills_workers_and_allows_interpreter_exit(http_server, path) -
         """)
     started = time.monotonic()
     result = subprocess.run(
-        [sys.executable, "-c", code, f"{url}{path}"],
+        [sys.executable, "-c", code, f"{url}{path}", str(deadline_seconds)],
         capture_output=True,
         text=True,
-        timeout=6,
+        timeout=deadline_seconds + 10,
         check=True,
     )
 
     assert result.stdout.strip() == "finished"
-    assert time.monotonic() - started < 5
+    assert time.monotonic() - started < deadline_seconds + 5
     assert len(requests) == 1
 
 
@@ -473,3 +513,47 @@ def test_fetch_json_reuses_workers_and_caps_total_response_bytes(
         and item.message == "provider responses exceed the scan size limit"
         for item in response.values()
     )
+
+
+def test_request_worker_serves_multiple_requests_and_exits_on_parent_eof(
+    http_server,
+) -> None:
+    url, requests = http_server
+    process_context = multiprocessing.get_context("spawn")
+    connection, child_connection = process_context.Pipe()
+    process = process_context.Process(
+        target=network._request_worker,
+        args=(
+            child_connection,
+            pickle.dumps(network._CondaState.capture()),
+            JsonRequest("first", "POST", f"{url}/data", {"value": 1}),
+            time.monotonic() + 60,
+        ),
+    )
+    process.start()
+    child_connection.close()
+    try:
+        assert connection.poll(30)
+        first = connection.recv()
+        assert first.key == "first"
+        assert first.payload == {"method": "POST", "payload": {"value": 1}}
+
+        connection.send(JsonRequest("second", "GET", f"{url}/data"))
+        assert connection.poll(30)
+        second = connection.recv()
+        assert second.key == "second"
+        assert second.payload == {"method": "GET", "payload": None}
+
+        connection.close()
+        process.join(timeout=10)
+        assert process.exitcode == 0
+        assert [(method, payload) for method, _, payload, _ in requests] == [
+            ("POST", {"value": 1}),
+            ("GET", None),
+        ]
+    finally:
+        connection.close()
+        if process.is_alive():
+            process.kill()
+        process.join()
+        process.close()
