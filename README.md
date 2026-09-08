@@ -53,7 +53,7 @@ eligible conda package record
 Only records with allowed artifact URLs are eligible for lookup.
 The defaults cover the canonical conda-forge channel and Prefix mirror.
 Records from other channels remain `not_checked`.
-Adding a trusted origin also permits lookup of private records beneath that URL, so use a path that contains only packages you intend to identify publicly.
+Adding a trusted origin also permits lookup of private records beneath that URL, so use a path that contains only packages you intend to query through advisory services.
 See [privacy](https://jezdez.github.io/conda-advise/explanation/privacy/) for the exact requests and conda's network settings.
 
 ## Interpret the result
