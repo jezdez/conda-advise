@@ -68,6 +68,18 @@ def test_subject_from_record_uses_channel_base_url_and_record_subdir() -> None:
     )
 
 
+def test_subject_from_record_derives_a_missing_filename_from_its_url() -> None:
+    record = FakeRecord(
+        fn="",
+        url="https://conda.anaconda.org/conda-forge/noarch/demo%2D1.0-py_0.conda",
+    )
+
+    subject = subject_from_record(record)
+
+    assert subject.filename == "demo-1.0-py_0.conda"
+    assert is_allowed_origin(subject.url)
+
+
 @pytest.mark.parametrize(
     ("field", "value", "expected"),
     [
