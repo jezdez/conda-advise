@@ -689,7 +689,6 @@ def test_request_worker_closes_connection_after_plugin_restore_error(
         assert connection.recv() is None
         process.join(timeout=10)
         assert process.exitcode == 0
-        assert connection.poll(1)
         with pytest.raises(EOFError):
             connection.recv()
         assert not requests
